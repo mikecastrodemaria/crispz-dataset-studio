@@ -83,7 +83,11 @@ on the real engine (the raw cosine is kept per try in `project.json`).
   character's non-human traits. Two things to add: an "unscored" mark for lines the
   face model cannot judge (no re-roll on score), and a subject description prefixed
   to every line ("the same black panther humanoid, ..."), the identity phrase the
-  25-shot packs rely on. Then crispz-qwen-edit.
+  25-shot packs rely on. Both were added the same evening and the 8 weak scored
+  cards were re-rendered with the subject phrase "the same black panther humanoid
+  character with a hair bun and small earrings": 7 of 8 now pass 50 (46 to 65, the
+  bathroom close-up went from a plain human at 26 to the character at 50), mean of
+  the 22 scored cards 60, the 3 unscored lines rendered once. Then crispz-qwen-edit.
 - Family fix shipped with it: `cli_faces` imported a function that did not exist in
   klein and flux3 (`detect_faces_full`), so no client could get embeddings.
 - Later: a `dataset` op in the family protocol so the same run can be driven without
