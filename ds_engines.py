@@ -56,6 +56,18 @@ import urllib.parse
 
 PROTOCOL = 1
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# The base repos each family tool can switch to through spec.model (its own
+# "checkpoint" dropdown). cli_caps lists only the checkpoint FILES of the tool's
+# folder, not these HF repos, so the Model menu of a project merges both. On
+# crispz-qwen-edit spec.model is the txt2img base; the edit model (Qwen-Image-Edit)
+# is a separate setting of that app and is not switched from here (2026-10-29).
+KNOWN_BASES = {
+    "crispz-klein": ["black-forest-labs/FLUX.2-klein-4B", "black-forest-labs/FLUX.2-klein-9B"],
+    "crispz-flux3": ["black-forest-labs/flux-3-image-klein",
+                     "black-forest-labs/flux-3-image-klein-base"],
+    "crispz-qwen-edit": ["Qwen/Qwen-Image"],
+}
 LOG_DIR = os.path.join(HERE, "logs")
 
 _LOG_HOOK = None
@@ -241,6 +253,10 @@ class Engine:
                 "faces": bool(((caps or {}).get("supports") or {}).get("faces")),
                 "edit": bool(((caps or {}).get("supports") or {}).get("edit")),
                 "max_refs": ((caps or {}).get("supports") or {}).get("max_refs"),
+                # a list of checkpoint files in the family; anything else is ignored
+                "models": [m for m in ((caps or {}).get("models") or [])
+                           if isinstance(m, str)] if isinstance((caps or {}).get("models"), list) else [],
+                "known_bases": list(KNOWN_BASES.get((caps or {}).get("tool") or "", [])),
                 "started_by_us": self.started_by_us(), "pid": self.pid(),
                 "launch_allowed": self.launch_allowed and bool(self.dir),
                 "log": self.log_path if os.path.isfile(self.log_path) else None}

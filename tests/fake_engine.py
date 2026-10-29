@@ -49,7 +49,7 @@ def caps():
             "supports": {"loras": True, "refs": True, "max_refs": 4, "seed": True, "negative": False,
                          "arbitrary_size": True, "faces": True, "detail_faces": True, "detail_hands": False,
                          "edit": True, "edit_presets": [], "inpaint": True},
-            "model_loaded": STATE["edits"] > 0, "models": {"loras": [], "edit_loras": []}}
+            "model_loaded": STATE["edits"] > 0, "models": [], "loras": [], "edit_loras": []}
 
 
 def edit(spec_json):

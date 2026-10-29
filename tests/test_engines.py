@@ -41,6 +41,12 @@ def test_probe_and_status(running_engine):
     assert caps and caps["tool"] == "fake-klein"
     st = running_engine.status()
     assert st["running"] and st["faces"] and st["edit"] and not st["started_by_us"]
+    assert st["models"] == [] and st["known_bases"] == []     # fake tool: nothing known
+    ds_engines.KNOWN_BASES["fake-klein"] = ["x/one"]
+    try:
+        assert running_engine.status()["known_bases"] == ["x/one"]
+    finally:
+        del ds_engines.KNOWN_BASES["fake-klein"]
 
 
 def test_edit_and_faces_round_trip(running_engine, tmp_path):
