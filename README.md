@@ -5,6 +5,8 @@
 > crispz-qwen-edit, crispz-flux3) through their CLI protocol v1, and starts them itself.
 > Version 0.1.0 (2026-10-29), local work in progress.
 
+![crispz Dataset Studio: a 25-card run on crispz-klein, the likeness badge on each card](assets/dataset-studio.png)
+
 ## What it does
 
 1. Drop a reference photo (only its main face matters).
