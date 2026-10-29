@@ -192,8 +192,10 @@ def update_settings(p, new):
     """Applies a settings dict from the UI. Changing the prompt set reloads its
     lines; editing 'prompts' directly wins over 'promptset'."""
     s = p["settings"]
-    if "promptset" in new and new["promptset"] != s.get("promptset") \
-            and "prompts" not in new:
+    # Picking a prompt set ALWAYS reloads its lines (even under the same name: the
+    # lines may have been edited by hand since, which is exactly when the user picks
+    # the set again to get them back, 2026-10-29).
+    if "promptset" in new and "prompts" not in new:
         s["promptset"] = new["promptset"]
         s["prompts"] = load_promptset(new["promptset"])
     for k, v in new.items():

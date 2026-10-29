@@ -98,6 +98,9 @@ def test_create_load_settings_and_card_rebuild(projects):
     p = ds_project.update_settings(ds_project.load("My-Hero"), {"prompts": ["one", "three"]})
     assert p["cards"][0]["status"] == "done" and p["cards"][1]["status"] == "pending"
     assert ds_project.list_projects()[0]["done"] == 1
+    # picking the bundled set again under the SAME name restores its 25 lines
+    p = ds_project.update_settings(ds_project.load("My-Hero"), {"promptset": "character-25"})
+    assert len(p["cards"]) == 25
     with pytest.raises(FileExistsError):
         ds_project.create("My Hero")
     assert ds_project.list_promptsets()[0] == {"name": "character-25", "count": 25}
