@@ -17,6 +17,11 @@ section.grid{padding:12px}
 .box h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 8px}
 .row{display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.row label{color:var(--mut);min-width:92px}
 .row input[type=number]{width:70px}.row select{flex:1}
+/* flex items default to min-width:auto, so a select with a long option (a model repo
+   id) or a text input with its intrinsic size pushed the 330 px panel into a
+   horizontal scroll (2026-10-29): they may shrink, the panel never scrolls sideways */
+.row select,.row input[type=text]{min-width:0;max-width:100%}
+aside{overflow-x:hidden}textarea{max-width:100%}
 textarea{width:100%;min-height:120px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12px}
 #ref{width:100%;aspect-ratio:1;object-fit:contain;background:#000;border-radius:6px;display:block}
 .drop{border:1px dashed var(--line);border-radius:6px;padding:14px;text-align:center;color:var(--mut);cursor:pointer}
