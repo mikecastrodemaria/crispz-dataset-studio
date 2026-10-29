@@ -89,6 +89,8 @@ def test_create_load_settings_and_card_rebuild(projects):
     assert [c["prompt"] for c in p["cards"]] == ["one", "two"]
     assert p["settings"]["threshold"] == 100 and p["settings"]["width"] == 1000
     assert p["settings"]["steps"] is None
+    p = ds_project.update_settings(p, {"model": " black-forest-labs/FLUX.2-klein-4B "})
+    assert p["settings"]["model"] == "black-forest-labs/FLUX.2-klein-4B"
     p["cards"][0]["status"] = "done"
     p["cards"][0]["file"] = "cards/001_t1.png"
     ds_project.save(p)

@@ -51,6 +51,10 @@ DEFAULT_SETTINGS = {
     "steps": None, "threshold": 35, "max_rerolls": 2, "caption_source": "prompt",
     "trigger_word": "", "detail_faces": None, "export_size": 1024,
     "export_format": "png", "guidance": None,
+    # The engine's checkpoint for this project (spec.model, the protocol's per-call
+    # switch: klein calls set_zimage_model). Empty = the engine's own setting. Added
+    # on 2026-10-29 so a dataset can run on klein-4B while the user's app stays on 9B.
+    "model": "",
 }
 
 _LOCK = threading.RLock()
@@ -203,6 +207,7 @@ def update_settings(p, new):
     s["max_rerolls"] = max(0, min(10, int(s.get("max_rerolls") or 0)))
     s["steps"] = int(s["steps"]) if s.get("steps") not in (None, "", 0, "0") else None
     s["guidance"] = float(s["guidance"]) if s.get("guidance") not in (None, "") else None
+    s["model"] = str(s.get("model") or "").strip()
     if s.get("caption_source") not in ("prompt", "ollama", "both"):
         s["caption_source"] = "prompt"
     if s.get("export_format") not in ("png", "jpg"):
@@ -377,6 +382,8 @@ class Runner:
             spec = {"prompt": card["prompt"], "input": ref, "refs": [ref],
                     "width": int(s["width"]), "height": int(s["height"]), "seed": seed,
                     "out_dir": os.path.join(d, "cards")}
+            if (s.get("model") or "").strip():
+                spec["model"] = s["model"].strip()
             if s.get("steps"):
                 spec["steps"] = int(s["steps"])
             if s.get("guidance") is not None:
