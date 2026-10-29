@@ -246,8 +246,23 @@ def test_export_pairs_resized_and_skips_rejected(projects, engines):
     p = ds_project.load("exp")
     ds_project.update_card(p, 2, status="rejected")
     ds_project.update_card(ds_project.load("exp"), 3, caption="  custom caption ")
-    r = ds_project.export(ds_project.load("exp"), size=32, fmt="jpg")
+    r = ds_project.export(ds_project.load("exp"), size=32, fmt="jpg",
+                          output_dir=str(projects / "out"))
     assert r["count"] == 2 and r["skipped"] == [2]
+    # the family layout: <out>/<date>/<project>_<stamp>/ + <lot>.zip beside it
+    import time as _t
+    day = _t.strftime("%Y-%m-%d")
+    assert r["lot"].startswith(f"{day}/exp_") and r["zip_rel"] == r["lot"] + ".zip"
+    assert os.path.isdir(r["dir"]) and r["zip"] == r["dir"] + ".zip"
+    assert sorted(os.listdir(r["dir"])) == ["001.jpg", "001.txt", "003.jpg", "003.txt"]
+    assert ds_project.load("exp")["last_export"]["lot"] == r["lot"]
+    # a second export the same second is a new lot, the first one is untouched
+    r2 = ds_project.export(ds_project.load("exp"), size=32, fmt="jpg",
+                           output_dir=str(projects / "out"))
+    assert r2["dir"] != r["dir"] and os.path.isdir(r["dir"]) and os.path.isfile(r["zip"])
+    flat = ds_project.export(ds_project.load("exp"), output_dir=str(projects / "flat"),
+                             date_subfolders=False)
+    assert "/" not in flat["lot"] and flat["lot"].startswith("exp_")
     with zipfile.ZipFile(r["zip"]) as z:
         names = sorted(z.namelist())
         assert names == ["001.jpg", "001.txt", "003.jpg", "003.txt"]

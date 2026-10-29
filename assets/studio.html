@@ -112,6 +112,10 @@ small{color:var(--mut)}
   <p><small>Engines are crispz family apps (klein, qwen-edit, flux3...). URL = the running instance; folder = its install dir so Dataset Studio can start it (port from the URL, log in logs/). One engine runs at a time: two apps do not fit on one GPU.</small></p>
   <div id="engList"></div>
   <button id="addEng">Add engine</button>
+  <h3 style="margin-top:14px">Output</h3>
+  <div class="row"><label>Folder</label><input type="text" id="outDir" style="flex:1" placeholder="out (next to the app) or an absolute path"></div>
+  <div class="row"><label></label><label><input type="checkbox" id="outDate"> date subfolders</label></div>
+  <small>Same layout as the crispz apps: &lt;folder&gt;/YYYY-MM-DD/&lt;project&gt;_&lt;YYYYMMDD-HHMMSS&gt;/ holds the NNN.png + NNN.txt pairs of one export (a lot), with the ZIP of the same name beside it. Nothing is overwritten.</small>
   <h3 style="margin-top:14px">Ollama (captions)</h3>
   <div class="row"><label>URL</label><input type="text" id="olUrl" style="flex:1"></div>
   <div class="row"><label>Model</label><select id="olModel"><option value="">first vision model</option></select></div>
@@ -119,7 +123,7 @@ small{color:var(--mut)}
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="setCancel">Close</button><button id="setSave" class="primary">Save</button></div>
   <small id="setMsg"></small>
 </dialog>
-<dialog id="zoom"><img alt=""><div class="row" style="justify-content:space-between;margin-top:8px"><span id="zoomInfo"></span><button onclick="document.getElementById('zoom').close()">Close</button></div></dialog>
+<dialog id="zoom"><img alt=""><div class="row" style="justify-content:space-between;margin-top:8px"><span id="zoomInfo"></span><span><button id="zoomPrev" title="previous card (left arrow)">&lt; Prev</button> <button id="zoomNext" title="next card (right arrow)">Next &gt;</button> <button onclick="document.getElementById('zoom').close()">Close (Esc)</button></span></div></dialog>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -238,9 +242,21 @@ function renderCards(current){if(!P)return;const el=$('cards');el.innerHTML='';
       <div class="btns">${c.status==='rejected'?`<button data-act="restore" data-i="${c.index}">Restore</button>`:`<button data-act="reject" data-i="${c.index}" ${c.file?'':'disabled'}>Reject</button>`}
       <button data-act="reroll" data-i="${c.index}">Re-roll</button>${c.tries.length>1?`<select data-try="${c.index}">${c.tries.map((t,i)=>`<option value="${i}" ${t.file===c.file?'selected':''}>try ${i+1}: ${t.score}</option>`).join('')}</select>`:''}</div></div>`;
     el.appendChild(d);});}
+// ---------- zoom viewer ----------
+// Prev / Next walk the rendered cards only (a pending card has no image); the arrow
+// keys do the same while the dialog is open, Esc closes it (the dialog's own default).
+let ZOOM_I=null;
+function zoomList(){return P?P.cards.filter(c=>c.file):[];}
+function showZoom(i){const list=zoomList();const c=list.find(x=>x.index===i)||list[0];if(!c)return;ZOOM_I=c.index;
+  const k=list.indexOf(c);$('zoom').querySelector('img').src=`/file/${P.name}/${c.file}?t=${encodeURIComponent(c.seed??'')}`;
+  $('zoomInfo').textContent=`${String(c.index).padStart(3,'0')} (${k+1}/${list.length}) · likeness ${c.scored===false?'n/s':c.score} · seed ${c.seed}`;
+  $('zoomPrev').disabled=k<=0;$('zoomNext').disabled=k>=list.length-1;}
+function zoomStep(d){const list=zoomList();const k=list.findIndex(x=>x.index===ZOOM_I);if(k<0)return;const n=list[k+d];if(n)showZoom(n.index);}
+$('zoomPrev').onclick=()=>zoomStep(-1);$('zoomNext').onclick=()=>zoomStep(1);
+$('zoom').addEventListener('keydown',ev=>{if(ev.key==='ArrowLeft'){ev.preventDefault();zoomStep(-1);}else if(ev.key==='ArrowRight'){ev.preventDefault();zoomStep(1);}});
 function esc(s){return String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 $('cards').addEventListener('click',async ev=>{const b=ev.target.closest('button[data-act]');
-  if(ev.target.tagName==='IMG'){const c=P.cards.find(x=>x.index==ev.target.dataset.i);$('zoom').querySelector('img').src=ev.target.src;$('zoomInfo').textContent=`${String(c.index).padStart(3,'0')} · likeness ${c.score} · seed ${c.seed}`;$('zoom').showModal();return;}
+  if(ev.target.tagName==='IMG'){showZoom(+ev.target.dataset.i);$('zoom').showModal();return;}
   if(!b)return;const i=+b.dataset.i;let r;
   if(b.dataset.act==='reject')r=await api('card_update',{name:P.name,index:i,status:'rejected'});
   else if(b.dataset.act==='restore')r=await api('card_update',{name:P.name,index:i,status:'done'});
@@ -250,7 +266,8 @@ $('cards').addEventListener('change',async ev=>{const t=ev.target;
   if(t.dataset.cap){const r=await api('card_update',{name:P.name,index:+t.dataset.cap,caption:t.value});if(!r.ok)say(r.error,'err');}
   if(t.dataset.try){const r=await api('card_update',{name:P.name,index:+t.dataset.try,use_try:+t.value});if(!r.ok)say(r.error,'err');await openProject(P.name);}});
 $('exportBtn').onclick=async()=>{if(!P)return;say('exporting...');const r=await api('export',{name:P.name,size:+$('expsize').value,format:$('expfmt').value});
-  if(!r.ok)return say(r.error,'err');say(`exported ${r.count} pair(s)${r.skipped.length?', skipped '+r.skipped.length:''} at ${r.size}px ${r.format}`);
+  if(!r.ok)return say(r.error,'err');say(`exported ${r.count} pair(s)${r.skipped.length?', skipped '+r.skipped.length:''} at ${r.size}px ${r.format} to ${r.dir}`);
+  const a=document.createElement('a');a.href=r.out_url;a.textContent='download '+r.zip_rel.split('/').pop();a.download='';$('log').prepend(a);
   window.open(`/file/${P.name}/${r.zip_rel}`,'_blank');};
 
 // ---------- settings dialog ----------
@@ -261,7 +278,7 @@ function engRow(name,e){const d=document.createElement('div');d.className='eng';
   d.querySelector('.rm').onclick=()=>d.remove();return d;}
 $('settingsBtn').onclick=async()=>{const r=await api('config_get');CFG=r.config;const l=$('engList');l.innerHTML='';
   Object.entries(CFG.engines||{}).forEach(([n,e])=>l.appendChild(engRow(n,e)));
-  $('olUrl').value=(CFG.ollama||{}).url||'http://127.0.0.1:11434';
+  $('olUrl').value=(CFG.ollama||{}).url||'http://127.0.0.1:11434';$('outDir').value=CFG.output_dir||'out';$('outDate').checked=CFG.date_subfolders!==false;
   const m=await api('ollama_models');const s=$('olModel');s.innerHTML='<option value="">first vision model</option>';(m.models||[]).forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent=x;s.appendChild(o);});
   const cur=(CFG.ollama||{}).model||'';if(cur&&!(m.models||[]).includes(cur)){const o=document.createElement('option');o.value=cur;o.textContent=cur+' (not a vision model, or not installed)';s.appendChild(o);}
   s.value=cur;$('olMsg').textContent=m.message||((m.models||[]).length?`${m.models.length} vision model(s) of ${m.installed} installed`:(m.installed?'' :'Ollama not reachable'));$('setMsg').textContent=r.exists?`writes ${r.config_file}`:`no config.json yet: Save creates ${r.config_file}`;$('settings').showModal();};
@@ -269,7 +286,7 @@ $('addEng').onclick=()=>$('engList').appendChild(engRow('',{url:'http://127.0.0.
 $('setCancel').onclick=()=>$('settings').close();
 $('setSave').onclick=async()=>{const engines={};$('engList').querySelectorAll('.eng').forEach(d=>{const n=d.querySelector('.n').value.trim();if(!n)return;
     engines[n]={url:d.querySelector('.u').value.trim(),dir:d.querySelector('.d').value.trim(),launch:d.querySelector('.l').checked};const p=d.querySelector('.p').value.trim();if(p)engines[n].python=p;});
-  const cfg=Object.assign({},CFG,{engines,ollama:{url:$('olUrl').value.trim(),model:$('olModel').value,keep_alive:(CFG.ollama||{}).keep_alive??0}});
+  const cfg=Object.assign({},CFG,{output_dir:$('outDir').value.trim()||'out',date_subfolders:$('outDate').checked,engines,ollama:{url:$('olUrl').value.trim(),model:$('olModel').value,keep_alive:(CFG.ollama||{}).keep_alive??0}});
   if(!cfg.engine||!engines[cfg.engine])cfg.engine=Object.keys(engines)[0]||'';
   const r=await api('config_set',{config:cfg});if(!r.ok){$('setMsg').textContent=r.error;return;}$('settings').close();refreshEngines();say('settings saved');};
 

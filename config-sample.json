@@ -23,5 +23,8 @@
     "model": "",
     "keep_alive": 0
   },
+  "output_dir": "out",
+  "date_subfolders": true,
+  "_output_help": "Where exports go, the crispz layout: 'output_dir' (relative = next to the app, like the family's default_output_dir 'out', or an absolute path), a YYYY-MM-DD subfolder when 'date_subfolders' is true, then one LOT folder per export, <project>_<YYYYMMDD-HHMMSS>/, holding the NNN.png + NNN.txt pairs, with <lot>.zip beside it. Never overwritten (_2, _3 on a same-second collision). The working files stay in projects/<name>/.",
   "port": 8780
 }

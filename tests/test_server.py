@@ -8,6 +8,7 @@ import time
 import socket
 import base64
 import threading
+import urllib.error
 import urllib.request
 
 import pytest
@@ -35,7 +36,8 @@ def studio(tmp_path, monkeypatch):
     esrv = fake_engine.start_in_thread(eport)
     cfg = {"engine": "fake", "engines": {"fake": {"url": f"http://127.0.0.1:{eport}",
                                                    "launch": False}},
-           "ollama": {"url": f"http://127.0.0.1:{free_port()}", "model": ""}, "port": 0}
+           "ollama": {"url": f"http://127.0.0.1:{free_port()}", "model": ""}, "port": 0,
+           "output_dir": str(tmp_path / "out")}
     port = free_port()
     ds_server.STUDIO = ds_server.Studio(cfg)
     srv = ds_server.ThreadingHTTPServer(("127.0.0.1", port), ds_server.Handler)
@@ -127,7 +129,11 @@ def test_project_flow_over_http(studio):
     assert r["ok"] and r["card"]["status"] == "rejected" and r["card"]["caption"] == "edited"
     r = post(studio, "export", {"name": "http-test", "size": 16, "format": "png"})
     assert r["ok"] and r["count"] == 1 and r["skipped"] == [2]
-    st, ct, body = get(studio, f"/file/http-test/{r['zip_rel']}")
+    assert r["out_url"] == "/out/" + r["zip_rel"] and r["lot"].count("/") == 1
+    st, ct, body = get(studio, r["out_url"])
     assert st == 200 and body[:2] == b"PK"
+    with pytest.raises(urllib.error.HTTPError) as ei:      # no walking out of the root
+        get(studio, "/out/..%2Fconfig.json")
+    assert ei.value.code == 404
     assert post(studio, "projects")["projects"][0]["done"] == 1
     assert post(studio, "promptsets")["promptsets"][0]["count"] == 25

@@ -46,6 +46,41 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECTS_DIR = os.path.join(HERE, "projects")
 PROMPTSETS_DIR = os.path.join(HERE, "promptsets")
 
+# Exports follow the family layout (crispz-klein cz_imageio: default_output_dir "out"
+# next to the app, a YYYY-MM-DD subfolder per day). On top of it, one folder per
+# export, the LOT: <out>/<date>/<project>_<YYYYMMDD-HHMMSS>/ holding the NNN.png +
+# NNN.txt pairs, with <lot>.zip beside it. A lot is never overwritten: two exports of
+# the same project the same second get _2, _3 (the family's _unique_path rule). The
+# working files (reference, cards/, tries) stay in projects/<name>/ (2026-10-29).
+DEFAULT_OUTPUT_DIR = "out"
+
+
+def output_root(output_dir=None):
+    """The absolute export root: a relative setting is taken from the app folder."""
+    d = (output_dir or "").strip() or DEFAULT_OUTPUT_DIR
+    d = os.path.expanduser(d)
+    if not os.path.isabs(d):
+        d = os.path.join(HERE, d)
+    return os.path.normpath(d)
+
+
+def _unique_dir(path):
+    if not os.path.exists(path) and not os.path.exists(path + ".zip"):
+        return path
+    i = 2
+    while os.path.exists(f"{path}_{i}") or os.path.exists(f"{path}_{i}.zip"):
+        i += 1
+    return f"{path}_{i}"
+
+
+def lot_dir(name, output_dir=None, date_subfolders=True, now=None):
+    """(lot folder, path relative to the output root) for a new export of `name`."""
+    root = output_root(output_dir)
+    t = now or time.localtime()
+    parent = os.path.join(root, time.strftime("%Y-%m-%d", t)) if date_subfolders else root
+    lot = _unique_dir(os.path.join(parent, f"{safe_name(name)}_{time.strftime('%Y%m%d-%H%M%S', t)}"))
+    return lot, os.path.relpath(lot, root).replace(os.sep, "/")
+
 DEFAULT_SETTINGS = {
     "promptset": "character-25", "prompts": [], "width": 1024, "height": 1024,
     "steps": None, "threshold": 35, "max_rerolls": 2, "caption_source": "prompt",
@@ -528,19 +563,18 @@ def update_card(p, index, caption=None, status=None, use_try=None):
     return card
 
 
-def export(p, size=None, fmt=None):
-    """ZIP of the done cards as NNN.<ext> + NNN.txt, the kohya / ai-toolkit /
-    OneTrainer pair layout. Images are resized so the LONG side = size (never
-    upscaled). Returns {zip, count, skipped}."""
+def export(p, size=None, fmt=None, output_dir=None, date_subfolders=True):
+    """The done cards as NNN.<ext> + NNN.txt, the kohya / ai-toolkit / OneTrainer
+    pair layout, written to a new lot folder under the output root (see lot_dir)
+    and zipped beside it. Images are resized so the LONG side = size (never
+    upscaled). Returns {dir, zip, zip_rel, lot, count, skipped, size, format}."""
     from PIL import Image
     d = project_dir(p["name"])
     s = p["settings"]
     size = int(size or s.get("export_size") or 1024)
     fmt = (fmt or s.get("export_format") or "png").lower()
     ext = "jpg" if fmt == "jpg" else "png"
-    out_dir = os.path.join(d, "export")
-    if os.path.isdir(out_dir):
-        shutil.rmtree(out_dir)
+    out_dir, lot_rel = lot_dir(p["name"], output_dir, date_subfolders)
     os.makedirs(out_dir)
     count, skipped = 0, []
     for c in p["cards"]:
@@ -564,9 +598,12 @@ def export(p, size=None, fmt=None):
         with open(stem + ".txt", "w", encoding="utf-8") as fh:
             fh.write((c.get("caption") or "").strip() + "\n")
         count += 1
-    zpath = os.path.join(d, f"{p['name']}-dataset.zip")
+    zpath = out_dir + ".zip"
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(os.listdir(out_dir)):
             z.write(os.path.join(out_dir, f), f)
-    return {"zip": zpath, "zip_rel": os.path.basename(zpath), "count": count,
-            "skipped": skipped, "size": size, "format": ext}
+    r = {"dir": out_dir, "zip": zpath, "zip_rel": lot_rel + ".zip", "lot": lot_rel,
+         "count": count, "skipped": skipped, "size": size, "format": ext}
+    p["last_export"] = dict(r, when=time.strftime("%Y-%m-%d %H:%M:%S"))
+    save(p)
+    return r

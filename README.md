@@ -17,8 +17,11 @@
    try is kept and the card says when it stayed below.
 4. Captions: the prompt line (trigger word first), a local Ollama vision model, or both.
 5. Review the grid: reject, restore, re-roll a card, pick another try, edit a caption.
-6. Export a ZIP of `001.png` + `001.txt` pairs (kohya, ai-toolkit, OneTrainer), long
-   side 1024 / 1536 / 2048, PNG or JPG.
+6. Export the `001.png` + `001.txt` pairs (kohya, ai-toolkit, OneTrainer), long side
+   1024 / 1536 / 2048, PNG or JPG, to the output folder of Settings with the crispz
+   layout: `out/YYYY-MM-DD/<project>_<YYYYMMDD-HHMMSS>/` (one lot per export, never
+   overwritten) and the ZIP of the same name beside it. The viewer walks the cards
+   with Prev / Next or the arrow keys.
 
 Everything is on disk under `projects/<name>/` (`project.json`, `reference.png`,
 `cards/NNN_tK.png`): a run resumes where it stopped and re-renders only the pending,
@@ -60,7 +63,7 @@ on the real engine (the raw cosine is kept per try in `project.json`).
 ## Status (2026-10-29)
 
 - Done on CPU: engine client and launcher, project state, run loop with re-rolls and
-  resume, captions (prompt / Ollama / both), export, SPA, 21 tests.
+  resume, captions (prompt / Ollama / both), export, SPA, 23 tests.
 - First real run on crispz-klein (2026-10-29, RTX 5090): klein launched by Dataset
   Studio in 10 s on port 7861 (its own .venv); FLUX.2-klein-9B under model offload
   (klein's own choice on 32 GB), 9 to 45 s per edit at 1024, 3 cards x 2 tries in

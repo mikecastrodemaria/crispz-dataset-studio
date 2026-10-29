@@ -9,7 +9,8 @@ a crispz family engine (ds_engines), which it can start itself.
 Routes:
   GET  /                      -> assets/studio.html
   GET  /assets/<f>            -> SPA files
-  GET  /file/<project>/<rel>  -> project files (reference.png, cards/, the ZIP)
+  GET  /file/<project>/<rel>  -> project files (reference.png, cards/)
+  GET  /out/<rel>             -> the export root (lot folders and their ZIPs)
   POST /api/<op>              -> JSON in / JSON out, {ok: true, ...} or {ok: false, error}
 
 Ops:
@@ -138,6 +139,8 @@ class Studio:
         cfg.setdefault("engines", {})
         cfg.setdefault("ollama", self.config.get("ollama", {}))
         cfg.setdefault("port", self.config.get("port", DEFAULT_PORT))
+        cfg.setdefault("output_dir", self.config.get("output_dir", ds_project.DEFAULT_OUTPUT_DIR))
+        cfg.setdefault("date_subfolders", self.config.get("date_subfolders", True))
         save_config(cfg)
         self.config = cfg
         self.engines.reload(cfg)
@@ -248,7 +251,11 @@ class Studio:
         p = self._project(data)
         if self.runner.state["running"] and self.runner.state["project"] == p["name"]:
             raise RuntimeError("wait for the run to finish before exporting")
-        return ds_project.export(p, size=data.get("size"), fmt=data.get("format"))
+        r = ds_project.export(p, size=data.get("size"), fmt=data.get("format"),
+                              output_dir=self.config.get("output_dir"),
+                              date_subfolders=bool(self.config.get("date_subfolders", True)))
+        r["out_url"] = "/out/" + urllib.request.quote(r["zip_rel"])
+        return r
 
     def shutdown(self):
         self.engines.stop_all()
@@ -305,6 +312,9 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 return self._send(404, b"not found", "text/plain")
             return self._file(_safe_join(root, urllib.request.unquote(rel)))
+        if path.startswith("/out/"):
+            root = ds_project.output_root(STUDIO.config.get("output_dir"))
+            return self._file(_safe_join(root, urllib.request.unquote(path[len("/out/"):])))
         if path == "/api/ping":
             return self._json({"ok": True, "tool": "crispz-dataset-studio",
                                "version": APP_VERSION})
