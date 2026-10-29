@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>crispz Dataset Studio</title>
+<style>
+:root{--bg:#0b1018;--panel:#1a2233;--line:#2a3346;--fg:#e6ebf2;--mut:#8b98ad;--ok:#3fb67a;--warn:#e0a12f;--bad:#d9534f;--acc:#4f8cff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,sans-serif;font-size:13px}
+header{position:sticky;top:0;z-index:5;background:#0b1018ee;backdrop-filter:blur(6px);padding:8px 14px;display:flex;gap:10px;align-items:center;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:15px;margin:0 8px 0 0;font-weight:600}
+input,button,select,textarea{background:#141b29;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:13px;font-family:inherit}
+button{cursor:pointer}button:hover{border-color:var(--acc)}button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+button.danger{border-color:var(--bad);color:var(--bad)}button:disabled{opacity:.5;cursor:default}
+main{display:grid;grid-template-columns:330px 1fr;gap:0;min-height:calc(100vh - 50px)}
+aside{border-right:1px solid var(--line);padding:12px;overflow:auto;max-height:calc(100vh - 50px);position:sticky;top:50px}
+section.grid{padding:12px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px}
+.box h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 8px}
+.row{display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.row label{color:var(--mut);min-width:92px}
+.row input[type=number]{width:70px}.row select{flex:1}
+textarea{width:100%;min-height:120px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+#ref{width:100%;aspect-ratio:1;object-fit:contain;background:#000;border-radius:6px;display:block}
+.drop{border:1px dashed var(--line);border-radius:6px;padding:14px;text-align:center;color:var(--mut);cursor:pointer}
+.drop.over{border-color:var(--acc);color:var(--fg)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+.card.rejected{opacity:.45}.card.rendering{outline:2px solid var(--acc)}.card.failed{border-color:var(--bad)}
+.card .img{position:relative;aspect-ratio:1;background:#05080d;display:flex;align-items:center;justify-content:center;color:var(--mut)}
+.card .img img{width:100%;height:100%;object-fit:cover;cursor:zoom-in}
+.badge{position:absolute;top:6px;left:6px;padding:2px 7px;border-radius:10px;font-weight:600;font-size:12px;background:#000a}
+.badge.ok{color:var(--ok)}.badge.low{color:var(--warn)}.badge.zero{color:var(--bad)}
+.card .idx{position:absolute;top:6px;right:6px;background:#000a;padding:2px 6px;border-radius:6px;color:var(--mut)}
+.card .body{padding:8px;display:flex;flex-direction:column;gap:6px}
+.card .prompt{color:var(--mut);font-size:11px;max-height:3.6em;overflow:hidden}
+.card textarea{min-height:54px;font-size:11px}
+.card .btns{display:flex;gap:4px;flex-wrap:wrap}.card .btns button{padding:3px 7px;font-size:11px}
+.warn{color:var(--warn);font-size:11px}.err{color:var(--bad);font-size:11px}
+#status{flex:1;min-width:220px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;width:100%;position:absolute;left:0;bottom:0}
+#bar i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);margin-right:5px}.dot.on{background:var(--ok)}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;max-width:760px;width:92vw}
+dialog::backdrop{background:#000a}dialog h3{margin:0 0 10px}
+.eng{border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:8px}
+.eng .row input[type=text]{flex:1}
+#log{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--mut);max-height:140px;overflow:auto;white-space:pre-wrap}
+#zoom img{max-width:88vw;max-height:84vh;display:block}
+small{color:var(--mut)}
+</style></head><body>
+<header>
+  <h1>crispz Dataset Studio</h1>
+  <select id="projSel" title="Project"></select>
+  <button id="newProj">New project</button>
+  <span id="engineDot"><span class="dot"></span><span id="engineTxt">engine</span></span>
+  <button id="engineBtn">Launch engine</button>
+  <button id="runBtn" class="primary">Run</button>
+  <button id="cancelBtn" class="danger" disabled>Cancel</button>
+  <button id="exportBtn">Export ZIP</button>
+  <span id="status"></span>
+  <button id="settingsBtn" title="Engines, Ollama">Settings</button>
+  <div id="bar"><i></i></div>
+</header>
+<main>
+<aside>
+  <div class="box"><h2>Reference</h2>
+    <img id="ref" alt="" style="display:none">
+    <div class="drop" id="drop">Drop the identity photo here, or click</div>
+    <input type="file" id="refFile" accept="image/*" style="display:none">
+    <div id="refInfo"><small></small></div>
+  </div>
+  <div class="box"><h2>Engine</h2>
+    <div class="row"><label>Engine</label><select id="engSel"></select></div>
+    <small id="engCaps"></small>
+  </div>
+  <div class="box"><h2>Prompts</h2>
+    <div class="row"><label>Prompt set</label><select id="psSel"></select></div>
+    <textarea id="prompts" spellcheck="false"></textarea>
+    <small>One edit instruction per line. The face comes from the reference. {a|b|c} groups are expanded by the engine.</small>
+  </div>
+  <div class="box"><h2>Render</h2>
+    <div class="row"><label>Size</label><input type="number" id="w" step="32"> x <input type="number" id="h" step="32"></div>
+    <div class="row"><label>Steps</label><input type="number" id="steps" placeholder="engine"><label style="min-width:0">Guidance</label><input type="number" id="guidance" step="0.1" placeholder="engine"></div>
+    <div class="row"><label>Likeness min</label><input type="number" id="threshold" min="0" max="100"><label style="min-width:0">Re-rolls</label><input type="number" id="rerolls" min="0" max="10"></div>
+    <div class="row"><label>Detail faces</label><select id="detail"><option value="">engine setting</option><option value="1">on</option><option value="0">off</option></select></div>
+  </div>
+  <div class="box"><h2>Captions</h2>
+    <div class="row"><label>Source</label><select id="capsrc"><option value="prompt">prompt line</option><option value="ollama">Ollama vision</option><option value="both">prompt + Ollama</option></select></div>
+    <div class="row"><label>Trigger word</label><input type="text" id="trigger" placeholder="ohwx person" style="flex:1"></div>
+  </div>
+  <div class="box"><h2>Export</h2>
+    <div class="row"><label>Long side</label><select id="expsize"><option>1024</option><option>1536</option><option>2048</option></select><select id="expfmt"><option value="png">png</option><option value="jpg">jpg</option></select></div>
+    <button id="saveBtn" class="primary" style="width:100%">Save settings</button>
+    <small id="saveMsg"></small>
+  </div>
+  <div class="box"><h2>Log</h2><div id="log"></div></div>
+</aside>
+<section class="grid"><div class="cards" id="cards"></div></section>
+</main>
+
+<dialog id="settings">
+  <h3>Settings</h3>
+  <p><small>Engines are crispz family apps (klein, qwen-edit, flux3...). URL = the running instance; folder = its install dir so Dataset Studio can start it (port from the URL, log in logs/). One engine runs at a time: two apps do not fit on one GPU.</small></p>
+  <div id="engList"></div>
+  <button id="addEng">Add engine</button>
+  <h3 style="margin-top:14px">Ollama (captions)</h3>
+  <div class="row"><label>URL</label><input type="text" id="olUrl" style="flex:1"></div>
+  <div class="row"><label>Model</label><select id="olModel"><option value="">first installed</option></select></div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="setCancel">Close</button><button id="setSave" class="primary">Save</button></div>
+  <small id="setMsg"></small>
+</dialog>
+<dialog id="zoom"><img alt=""><div class="row" style="justify-content:space-between;margin-top:8px"><span id="zoomInfo"></span><button onclick="document.getElementById('zoom').close()">Close</button></div></dialog>
+
+<script>
+const $=id=>document.getElementById(id);
+let P=null, CFG=null, ENGINES=[], POLL=null, lastRunning=false;
+async function api(op,data){const r=await fetch('/api/'+op,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})});return r.json();}
+function say(t,cls){$('status').textContent=t||'';$('status').className=cls||'';}
+function logLines(lines){$('log').textContent=(lines||[]).join('\n');$('log').scrollTop=1e9;}
+
+// ---------- projects ----------
+async function loadProjects(sel){const r=await api('projects');const s=$('projSel');s.innerHTML='';
+  (r.projects||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.done}/${p.cards})`;s.appendChild(o);});
+  if(sel)s.value=sel; if(s.value)await openProject(s.value); else renderEmpty();}
+function renderEmpty(){P=null;$('cards').innerHTML='<p style="color:var(--mut)">No project yet: click New project.</p>';$('ref').style.display='none';}
+async function openProject(name){const r=await api('project_get',{name});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();}
+$('newProj').onclick=async()=>{const name=prompt('Project name (letters, digits, - _ .)');if(!name)return;
+  const r=await api('project_new',{name,engine:$('engSel').value||undefined});if(!r.ok)return say(r.error,'err');await loadProjects(r.project.name);};
+$('projSel').onchange=()=>openProject($('projSel').value);
+
+function fill(){const s=P.settings;
+  $('ref').style.display=P.reference?'block':'none';if(P.reference)$('ref').src=`/file/${P.name}/${P.reference}?t=${Date.now()}`;
+  $('refInfo').firstElementChild.textContent=P.reference?(P.ref_embedding?`face embedding ready (${P.ref_faces} face(s) on the photo)`:'face not analysed yet (engine was off); done at run start'):'';
+  $('engSel').value=P.engine||''; $('psSel').value=s.promptset||'';
+  $('prompts').value=(s.prompts||[]).join('\n'); $('w').value=s.width;$('h').value=s.height;
+  $('steps').value=s.steps??'';$('guidance').value=s.guidance??'';$('threshold').value=s.threshold;$('rerolls').value=s.max_rerolls;
+  $('detail').value=s.detail_faces===null||s.detail_faces===undefined?'':(s.detail_faces?'1':'0');
+  $('capsrc').value=s.caption_source;$('trigger').value=s.trigger_word||'';$('expsize').value=String(s.export_size);$('expfmt').value=s.export_format;}
+$('psSel').onchange=async()=>{if(!P)return;const r=await api('project_settings',{name:P.name,settings:{promptset:$('psSel').value}});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();};
+$('saveBtn').onclick=async()=>{if(!P)return;const d=$('detail').value;
+  const settings={prompts:$('prompts').value,width:+$('w').value,height:+$('h').value,steps:$('steps').value||null,guidance:$('guidance').value||null,
+    threshold:+$('threshold').value,max_rerolls:+$('rerolls').value,detail_faces:d===''?null:d==='1',caption_source:$('capsrc').value,
+    trigger_word:$('trigger').value,export_size:+$('expsize').value,export_format:$('expfmt').value};
+  const r=await api('project_settings',{name:P.name,settings,engine:$('engSel').value});
+  if(!r.ok){$('saveMsg').textContent=r.error;return;}P=r.project;$('saveMsg').textContent='saved';setTimeout(()=>$('saveMsg').textContent='',1500);renderCards();loadProjects(P.name);};
+$('engSel').onchange=async()=>{if(P){await api('project_settings',{name:P.name,settings:{},engine:$('engSel').value});P.engine=$('engSel').value;}refreshEngines();};
+
+// ---------- reference ----------
+const drop=$('drop');drop.onclick=()=>$('refFile').click();
+['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop',ev=>{const f=ev.dataTransfer.files[0];if(f)sendRef(f);});
+$('refFile').onchange=()=>{const f=$('refFile').files[0];if(f)sendRef(f);};
+function sendRef(file){if(!P)return say('create a project first','err');const fr=new FileReader();fr.onload=async()=>{
+  say('uploading reference...');const r=await api('set_reference',{name:P.name,data:fr.result,filename:file.name});
+  if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();say(r.warning||r.message||'reference saved',r.warning?'warn':'');};fr.readAsDataURL(file);}
+
+// ---------- engines ----------
+async function refreshEngines(){const r=await api('engines');ENGINES=r.engines||[];const s=$('engSel');const cur=P?P.engine:s.value;s.innerHTML='';
+  ENGINES.forEach(e=>{const o=document.createElement('option');o.value=e.name;o.textContent=e.name+(e.running?' (running)':'');s.appendChild(o);});
+  if(cur&&ENGINES.some(e=>e.name===cur))s.value=cur;else if(r.default)s.value=r.default;
+  const e=ENGINES.find(x=>x.name===s.value);const dot=$('engineDot').firstElementChild;
+  if(e){dot.className='dot'+(e.running?' on':'');$('engineTxt').textContent=e.running?`${e.tool} ${e.version||''}`:`${e.name}: not running`;
+    $('engineBtn').textContent=e.running?(e.started_by_us?'Stop engine':'Engine running'):'Launch engine';$('engineBtn').disabled=e.running&&!e.started_by_us;
+    $('engCaps').textContent=e.running?`edit ${e.edit?'yes':'no'}, faces ${e.faces?'yes':'no (likeness = 0)'}, model ${e.model_loaded?'loaded':'loads at first image'}`:(e.launch_allowed?`will be started from ${e.dir}`:'launch disabled: start it by hand');}
+  else{dot.className='dot';$('engineTxt').textContent='no engine configured';$('engCaps').textContent='';}}
+$('engineBtn').onclick=async()=>{const e=ENGINES.find(x=>x.name===$('engSel').value);if(!e)return $('settings').showModal();
+  if(e.running&&e.started_by_us){say('stopping engine...');const r=await api('engine_stop',{name:e.name});say(r.ok?'engine stopped':r.error,r.ok?'':'err');}
+  else{say(`starting ${e.name}... (10 to 30 s, see logs/${e.name}.log)`);$('engineBtn').disabled=true;const r=await api('engine_launch',{name:e.name});$('engineBtn').disabled=false;say(r.ok?(r.message||'engine ready'):r.error,r.ok?'':'err');}
+  refreshEngines();};
+
+// ---------- run ----------
+$('runBtn').onclick=async()=>{if(!P)return;const r=await api('run',{name:P.name,engine:$('engSel').value||undefined});
+  if(!r.ok)return say(r.error,'err');if(!r.started)return say(r.message,'warn');say(`run started: ${r.total} card(s)`);poll();};
+$('cancelBtn').onclick=()=>api('cancel');
+async function poll(){clearTimeout(POLL);const r=await api('status');const s=r.status||{};
+  $('cancelBtn').disabled=!s.running;$('runBtn').disabled=!!s.running;
+  $('bar').firstElementChild.style.width=s.total?Math.round(100*s.done/s.total)+'%':'0';
+  if(s.text)say((s.running?'':'')+s.text,s.ok===false?'err':'');logLines(s.log);
+  if(s.running||lastRunning){if(P&&s.project===P.name){const pr=await api('project_get',{name:P.name});if(pr.ok){P=pr.project;renderCards(s.current);fill();}}}
+  if(!s.running&&lastRunning){loadProjects(P&&P.name);refreshEngines();}
+  lastRunning=!!s.running;POLL=setTimeout(poll,s.running?1500:6000);}
+
+// ---------- cards ----------
+function badge(c){if(c.score===null||c.score===undefined)return '';const cls=c.score>=(P.settings.threshold||0)?'ok':(c.score>0?'low':'zero');return `<span class="badge ${cls}">${c.score}</span>`;}
+function renderCards(current){if(!P)return;const el=$('cards');el.innerHTML='';
+  P.cards.forEach(c=>{const d=document.createElement('div');d.className='card '+(c.status||'')+(c.index===current?' rendering':'');
+    const img=c.file?`<img src="/file/${P.name}/${c.file}" data-i="${c.index}">`:`<span>${c.status==='rendering'||c.index===current?'rendering...':(c.status==='failed'?'failed':'pending')}</span>`;
+    d.innerHTML=`<div class="img">${img}${badge(c)}<span class="idx">${String(c.index).padStart(3,'0')}${c.tries.length>1?' · '+c.tries.length+' tries':''}</span></div>
+      <div class="body"><div class="prompt" title="${esc(c.prompt)}">${esc(c.prompt)}</div>
+      <textarea data-cap="${c.index}" placeholder="caption">${esc(c.caption||'')}</textarea>
+      ${(c.warnings||[]).map(w=>`<div class="warn">${esc(w)}</div>`).join('')}${c.error?`<div class="err">${esc(c.error)}</div>`:''}
+      <div class="btns">${c.status==='rejected'?`<button data-act="restore" data-i="${c.index}">Restore</button>`:`<button data-act="reject" data-i="${c.index}" ${c.file?'':'disabled'}>Reject</button>`}
+      <button data-act="reroll" data-i="${c.index}">Re-roll</button>${c.tries.length>1?`<select data-try="${c.index}">${c.tries.map((t,i)=>`<option value="${i}" ${t.file===c.file?'selected':''}>try ${i+1}: ${t.score}</option>`).join('')}</select>`:''}</div></div>`;
+    el.appendChild(d);});}
+function esc(s){return String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
+$('cards').addEventListener('click',async ev=>{const b=ev.target.closest('button[data-act]');
+  if(ev.target.tagName==='IMG'){const c=P.cards.find(x=>x.index==ev.target.dataset.i);$('zoom').querySelector('img').src=ev.target.src;$('zoomInfo').textContent=`${String(c.index).padStart(3,'0')} · likeness ${c.score} · seed ${c.seed}`;$('zoom').showModal();return;}
+  if(!b)return;const i=+b.dataset.i;let r;
+  if(b.dataset.act==='reject')r=await api('card_update',{name:P.name,index:i,status:'rejected'});
+  else if(b.dataset.act==='restore')r=await api('card_update',{name:P.name,index:i,status:'done'});
+  else if(b.dataset.act==='reroll'){r=await api('run',{name:P.name,only:[i],force:true,engine:$('engSel').value||undefined});if(r.ok&&r.started){say('re-rolling card '+i);poll();}}
+  if(r&&!r.ok)say(r.error,'err');if(b.dataset.act!=='reroll'){await openProject(P.name);}});
+$('cards').addEventListener('change',async ev=>{const t=ev.target;
+  if(t.dataset.cap){const r=await api('card_update',{name:P.name,index:+t.dataset.cap,caption:t.value});if(!r.ok)say(r.error,'err');}
+  if(t.dataset.try){const r=await api('card_update',{name:P.name,index:+t.dataset.try,use_try:+t.value});if(!r.ok)say(r.error,'err');await openProject(P.name);}});
+$('exportBtn').onclick=async()=>{if(!P)return;say('exporting...');const r=await api('export',{name:P.name,size:+$('expsize').value,format:$('expfmt').value});
+  if(!r.ok)return say(r.error,'err');say(`exported ${r.count} pair(s)${r.skipped.length?', skipped '+r.skipped.length:''} at ${r.size}px ${r.format}`);
+  window.open(`/file/${P.name}/${r.zip_rel}`,'_blank');};
+
+// ---------- settings dialog ----------
+function engRow(name,e){const d=document.createElement('div');d.className='eng';d.innerHTML=`
+  <div class="row"><label>Name</label><input type="text" class="n" value="${esc(name)}" style="width:120px"><label style="min-width:0">URL</label><input type="text" class="u" value="${esc(e.url||'')}"></div>
+  <div class="row"><label>Folder</label><input type="text" class="d" value="${esc(e.dir||'')}" placeholder="D:/Github/crispz-klein"></div>
+  <div class="row"><label>Python</label><input type="text" class="p" value="${esc(e.python||'')}" placeholder="optional: explicit interpreter"><label style="min-width:0"><input type="checkbox" class="l" ${e.launch!==false?'checked':''}> auto-launch</label><button class="rm">Remove</button></div>`;
+  d.querySelector('.rm').onclick=()=>d.remove();return d;}
+$('settingsBtn').onclick=async()=>{const r=await api('config_get');CFG=r.config;const l=$('engList');l.innerHTML='';
+  Object.entries(CFG.engines||{}).forEach(([n,e])=>l.appendChild(engRow(n,e)));
+  $('olUrl').value=(CFG.ollama||{}).url||'http://127.0.0.1:11434';
+  const m=await api('ollama_models');const s=$('olModel');s.innerHTML='<option value="">first installed</option>';(m.models||[]).forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent=x;s.appendChild(o);});
+  s.value=(CFG.ollama||{}).model||'';$('setMsg').textContent=r.exists?`writes ${r.config_file}`:`no config.json yet: Save creates ${r.config_file}`;$('settings').showModal();};
+$('addEng').onclick=()=>$('engList').appendChild(engRow('',{url:'http://127.0.0.1:7861',launch:true}));
+$('setCancel').onclick=()=>$('settings').close();
+$('setSave').onclick=async()=>{const engines={};$('engList').querySelectorAll('.eng').forEach(d=>{const n=d.querySelector('.n').value.trim();if(!n)return;
+    engines[n]={url:d.querySelector('.u').value.trim(),dir:d.querySelector('.d').value.trim(),launch:d.querySelector('.l').checked};const p=d.querySelector('.p').value.trim();if(p)engines[n].python=p;});
+  const cfg=Object.assign({},CFG,{engines,ollama:{url:$('olUrl').value.trim(),model:$('olModel').value,keep_alive:(CFG.ollama||{}).keep_alive??0}});
+  if(!cfg.engine||!engines[cfg.engine])cfg.engine=Object.keys(engines)[0]||'';
+  const r=await api('config_set',{config:cfg});if(!r.ok){$('setMsg').textContent=r.error;return;}$('settings').close();refreshEngines();say('settings saved');};
+
+// ---------- boot ----------
+(async()=>{const ps=await api('promptsets');(ps.promptsets||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.count})`;$('psSel').appendChild(o);});
+  await refreshEngines();await loadProjects();poll();setInterval(refreshEngines,15000);})();
+</script>
+</body></html>

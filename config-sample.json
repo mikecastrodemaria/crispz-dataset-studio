@@ -1,0 +1,27 @@
+{
+  "_help": "Copy to config.json (gitignored) or use Settings in the app, which writes it. 'engines' lists the crispz family tools Dataset Studio drives through the CLI protocol v1: 'url' = the app instance (hidden Gradio endpoints cli_caps / cli_edit / cli_faces), 'dir' = its install folder so Dataset Studio can START it when nothing answers (the port of 'url' is passed as GRADIO_SERVER_PORT, the log goes to logs/<name>.log), 'launch' = allow that start, 'python' = optional explicit interpreter (default: <dir>/.venv, then <dir>/env, then py -3). Give each engine ITS OWN port: two family apps on 7860 cannot coexist, and two running at once do not fit on one GPU anyway (Dataset Studio starts one at a time). 'engine' = the default. 'ollama' = the local vision model used when a project's caption_source is 'ollama' or 'both' (empty model = first installed; keep_alive 0 unloads it after each caption, the GPU is shared with the engine).",
+  "engine": "klein",
+  "engines": {
+    "klein": {
+      "dir": "D:/Github/crispz-klein",
+      "url": "http://127.0.0.1:7861",
+      "launch": true
+    },
+    "qwen-edit": {
+      "dir": "D:/Github/crispz-qwen-edit",
+      "url": "http://127.0.0.1:7862",
+      "launch": true
+    },
+    "flux3": {
+      "dir": "D:/Github/crispz-flux3",
+      "url": "http://127.0.0.1:7863",
+      "launch": true
+    }
+  },
+  "ollama": {
+    "url": "http://127.0.0.1:11434",
+    "model": "",
+    "keep_alive": 0
+  },
+  "port": 8780
+}
