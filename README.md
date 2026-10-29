@@ -74,8 +74,16 @@ on the real engine (the raw cosine is kept per try in `project.json`).
   3 cards in 34 s, 17.9 GB resident. Likeness 56 / 64 / 79, all above the threshold
   at the first try, and the eye agrees (the 79 keeps every feature, the 56 drifts a
   little on a close-up). So: threshold 35 is a safe drift floor, 50 a quality floor,
-  on a photo reference; a drawn reference needs its own, lower scale. Next:
-  crispz-qwen-edit.
+  on a photo reference; a drawn reference needs its own, lower scale.
+- Full 25-shot run on the same reference, klein-4B, threshold 50, 2 re-rolls: 25 cards
+  in 247 s, 54 tries at 5.2 s each, scores 9 to 80 (mean 51), 10 cards passed at the
+  first try, 10 stayed below 50 after 3 tries. The weak ones are telling: a rear view
+  or closed eyes give ArcFace nothing to compare (scores 9 and 19 on cards that LOOK
+  right), and close-ups that re-describe the face ("no makeup look") lose the
+  character's non-human traits. Two things to add: an "unscored" mark for lines the
+  face model cannot judge (no re-roll on score), and a subject description prefixed
+  to every line ("the same black panther humanoid, ..."), the identity phrase the
+  25-shot packs rely on. Then crispz-qwen-edit.
 - Family fix shipped with it: `cli_faces` imported a function that did not exist in
   klein and flux3 (`detect_faces_full`), so no client could get embeddings.
 - Later: a `dataset` op in the family protocol so the same run can be driven without
