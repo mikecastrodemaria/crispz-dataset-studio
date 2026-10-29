@@ -61,7 +61,15 @@ on the real engine (the raw cosine is kept per try in `project.json`).
 
 - Done on CPU: engine client and launcher, project state, run loop with re-rolls and
   resume, captions (prompt / Ollama / both), export, SPA, 21 tests.
-- Not yet measured on the GPU: a real run on crispz-klein (identity fidelity of the
-  edits, timing per card, the threshold), then crispz-qwen-edit.
+- First real run on crispz-klein (2026-10-29, RTX 5090): klein launched by Dataset
+  Studio in 10 s on port 7861 (its own .venv); FLUX.2-klein-9B under model offload
+  (klein's own choice on 32 GB), 9 to 45 s per edit at 1024, 3 cards x 2 tries in
+  170 s. The identity (a comic character) was kept in the two comic cards and turned
+  photoreal in the "studio portrait" one; ArcFace cosines stayed at 0.03 to 0.29, so
+  the 35 threshold is too high for a drawn character and the scale needs a photo
+  reference to calibrate. Next: a photo reference, klein-4B (3 s per edit), then
+  crispz-qwen-edit.
+- Family fix shipped with it: `cli_faces` imported a function that did not exist in
+  klein and flux3 (`detect_faces_full`), so no client could get embeddings.
 - Later: a `dataset` op in the family protocol so the same run can be driven without
   the UI; a bounding-box / outfit lock; per-card prompt overrides.
