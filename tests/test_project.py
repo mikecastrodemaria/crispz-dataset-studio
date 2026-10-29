@@ -109,8 +109,11 @@ def test_set_reference_without_engine_then_embedding_at_run(projects, engines):
     assert p["reference"] == "reference.png" and p["ref_embedding"] is None
     assert warn is None
     assert os.path.isfile(os.path.join(ds_project.project_dir("ref"), "reference.png"))
+    stale = os.path.join(ds_project.project_dir("ref"), "cards", "001_t1.png")
+    open(stale, "wb").write(png_bytes())
     p, warn = ds_project.set_reference(p, png_bytes(), engine=engines.get("fake"))
     assert len(p["ref_embedding"]) == 512 and p["ref_faces"] == 1
+    assert not os.path.exists(stale)          # the old identity's renders are gone
     # a reference with no face says so
     p, warn = ds_project.set_reference(p, png_bytes((0, 0, 0)), engine=engines.get("fake"))
     assert p["ref_embedding"] is None and "no face" in warn

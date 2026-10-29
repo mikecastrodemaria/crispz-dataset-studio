@@ -227,6 +227,14 @@ def set_reference(p, data, engine=None):
     img.save(path, "PNG")
     p["reference"] = "reference.png"
     p["ref_embedding"], p["ref_faces"] = None, 0
+    # The renders of the previous identity go: a new reference means a new dataset,
+    # and NNN_tK.png names would otherwise mix two people (seen on 2026-10-29).
+    cards_dir = os.path.join(d, "cards")
+    for f in os.listdir(cards_dir) if os.path.isdir(cards_dir) else []:
+        try:
+            os.remove(os.path.join(cards_dir, f))
+        except OSError:
+            pass
     for c in p["cards"]:
         c.update({"status": "pending", "file": "", "seed": None, "score": None,
                   "detail": {}, "tries": [], "caption": "", "error": ""})

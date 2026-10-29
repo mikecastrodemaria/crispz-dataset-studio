@@ -67,7 +67,14 @@ on the real engine (the raw cosine is kept per try in `project.json`).
   170 s. The identity (a comic character) was kept in the two comic cards and turned
   photoreal in the "studio portrait" one; ArcFace cosines stayed at 0.03 to 0.29, so
   the 35 threshold is too high for a drawn character and the scale needs a photo
-  reference to calibrate. Next: a photo reference, klein-4B (3 s per edit), then
+  reference to calibrate.
+- Second run, same day, a photo-like reference (a stylised character portrait) on
+  klein-4B through the per-project Model setting (spec.model, the user's app keeps
+  its 9B): 4B loaded in 16 s, 3 s per edit, 4 s per card with the face round trip,
+  3 cards in 34 s, 17.9 GB resident. Likeness 56 / 64 / 79, all above the threshold
+  at the first try, and the eye agrees (the 79 keeps every feature, the 56 drifts a
+  little on a close-up). So: threshold 35 is a safe drift floor, 50 a quality floor,
+  on a photo reference; a drawn reference needs its own, lower scale. Next:
   crispz-qwen-edit.
 - Family fix shipped with it: `cli_faces` imported a function that did not exist in
   klein and flux3 (`detect_faces_full`), so no client could get embeddings.

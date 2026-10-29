@@ -105,9 +105,17 @@ def test_launch_starts_the_app_waits_for_caps_and_stops_it():
         with open(e.log_path, encoding="utf-8", errors="replace") as fh:
             txt = fh.read()
         assert f"port {port}" in txt and "fake app booting" in txt
+        # a NEW Engine object (the server restarted) adopts the child from its pid file
+        e2 = ds_engines.Engine("fakeapp", {"url": f"http://127.0.0.1:{port}",
+                                           "dir": os.path.join(HERE, "fake_app_dir")})
+        assert e2.started_by_us() and e2.pid() == e.proc.pid
+        r = e2.stop()
+        assert r["ok"] and r["stopped"]
+        time.sleep(0.5)
+        assert e.proc.poll() is not None and not os.path.isfile(e.pid_path)
     finally:
         r = e.stop()
-    assert r["ok"] and r["stopped"]
+    assert r["ok"] and r["stopped"] is False       # already stopped through e2
     assert not e.started_by_us()
     time.sleep(0.3)
     assert ds_engines.probe(e.url, timeout=1) is None

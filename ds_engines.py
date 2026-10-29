@@ -125,6 +125,28 @@ def _port_of(url):
         return 7860
 
 
+def _pid_alive(pid):
+    """Is a process with that pid running? stdlib only (no psutil)."""
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["tasklist", "/FI", f"PID eq {int(pid)}", "/NH"],
+                                 capture_output=True, text=True, timeout=10).stdout
+            return str(int(pid)) in out
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+def _kill_pid(pid):
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(int(pid)), "/T", "/F"],
+                       capture_output=True, timeout=20)
+    else:
+        import signal
+        os.kill(int(pid), signal.SIGTERM)
+
+
 # ----------------------------------------------------------------------------
 # Interpreter resolution (the family's run.bat rule)
 # ----------------------------------------------------------------------------
@@ -168,8 +190,23 @@ class Engine:
         self.boot_timeout = float(cfg.get("boot_timeout", 120))
         self.proc = None
         self.log_path = os.path.join(LOG_DIR, f"{name}.log")
+        self.pid_path = os.path.join(LOG_DIR, f"{name}.pid")
         self._probe = (0.0, None)
         self._lock = threading.Lock()
+        # A child started by a PREVIOUS Dataset Studio process (the server was
+        # restarted, the engine kept running): its pid file lets us adopt it, so the
+        # Stop button still works instead of the engine becoming an orphan holding
+        # the VRAM (2026-10-29).
+        self.adopted_pid = None
+        try:
+            with open(self.pid_path, encoding="utf-8") as fh:
+                pid = int(fh.read().strip() or 0)
+            if pid > 0 and _pid_alive(pid):
+                self.adopted_pid = pid
+            else:
+                os.remove(self.pid_path)
+        except (OSError, ValueError):
+            pass
 
     # -- status ---------------------------------------------------------------
     def caps(self, max_age=5.0, timeout=4):
@@ -184,7 +221,15 @@ class Engine:
         self._probe = (0.0, None)
 
     def started_by_us(self):
-        return self.proc is not None and self.proc.poll() is None
+        if self.proc is not None:
+            return self.proc.poll() is None
+        if self.adopted_pid and _pid_alive(self.adopted_pid):
+            return True
+        self.adopted_pid = None
+        return False
+
+    def pid(self):
+        return self.proc.pid if self.proc is not None else self.adopted_pid
 
     def status(self):
         caps = self.caps()
@@ -196,7 +241,7 @@ class Engine:
                 "faces": bool(((caps or {}).get("supports") or {}).get("faces")),
                 "edit": bool(((caps or {}).get("supports") or {}).get("edit")),
                 "max_refs": ((caps or {}).get("supports") or {}).get("max_refs"),
-                "started_by_us": self.started_by_us(),
+                "started_by_us": self.started_by_us(), "pid": self.pid(),
                 "launch_allowed": self.launch_allowed and bool(self.dir),
                 "log": self.log_path if os.path.isfile(self.log_path) else None}
 
@@ -246,6 +291,11 @@ class Engine:
             except OSError as e:
                 logf.close()
                 return {"ok": False, "error": f"engine '{self.name}': cannot start: {e}"}
+            try:
+                with open(self.pid_path, "w", encoding="utf-8") as fh:
+                    fh.write(str(self.proc.pid))
+            except OSError:
+                pass
             _log(f"{self.name}: started pid {self.proc.pid} with {label}, port "
                  f"{env['GRADIO_SERVER_PORT']}, log {self.log_path}")
         if not wait:
@@ -281,18 +331,29 @@ class Engine:
                 return {"ok": False, "error": f"engine '{self.name}' at {self.url} was not "
                         f"started by Dataset Studio: close it yourself"}
             return {"ok": True, "stopped": False, "message": "nothing to stop"}
-        p = self.proc
+        pid = self.pid()
         try:
-            p.terminate()
-            try:
-                p.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                p.kill()
-                p.wait(timeout=5)
+            if self.proc is not None:
+                p = self.proc
+                p.terminate()
+                try:
+                    p.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait(timeout=5)
+            else:
+                _kill_pid(pid)
+                deadline = time.time() + timeout
+                while _pid_alive(pid) and time.time() < deadline:
+                    time.sleep(0.5)
         except Exception as e:
             return {"ok": False, "error": f"engine '{self.name}': stop failed: {e}"}
-        _log(f"{self.name}: stopped pid {p.pid}")
-        self.proc = None
+        _log(f"{self.name}: stopped pid {pid}")
+        self.proc, self.adopted_pid = None, None
+        try:
+            os.remove(self.pid_path)
+        except OSError:
+            pass
         self.forget()
         return {"ok": True, "stopped": True}
 
@@ -349,7 +410,7 @@ class Engines:
             e = Engine(name, cfg)
             old = self.by_name.get(name)
             if old is not None and old.started_by_us():
-                e.proc = old.proc
+                e.proc, e.adopted_pid = old.proc, old.adopted_pid
             new[name] = e
         self.by_name = new
         self.default = str(config.get("engine") or "").strip() or \
