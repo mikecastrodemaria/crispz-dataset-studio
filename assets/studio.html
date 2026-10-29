@@ -63,8 +63,9 @@ small{color:var(--mut)}
 <aside>
   <div class="box"><h2>Reference</h2>
     <img id="ref" alt="" style="display:none">
-    <div class="drop" id="drop">Drop the identity photo here, or click</div>
+    <div class="drop" id="drop">Drop the identity photo anywhere on this page, paste it (Ctrl+V), or click here to choose a file</div>
     <input type="file" id="refFile" accept="image/*" style="display:none">
+    <div class="row" style="margin-top:6px"><input type="text" id="refPath" placeholder="or a file path on this PC: D:\photos\me.jpg" style="flex:1"><button id="refPathBtn">Use</button></div>
     <div id="refInfo"><small></small></div>
   </div>
   <div class="box"><h2>Engine</h2>
@@ -148,8 +149,15 @@ const drop=$('drop');drop.onclick=()=>$('refFile').click();
 ['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over');}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over');}));
 drop.addEventListener('drop',ev=>{const f=ev.dataTransfer.files[0];if(f)sendRef(f);});
+// a file dropped anywhere else must not navigate the page away: it becomes the reference
+document.addEventListener('dragover',ev=>ev.preventDefault());
+document.addEventListener('drop',ev=>{ev.preventDefault();if(ev.target.closest('#drop'))return;const f=ev.dataTransfer.files&&ev.dataTransfer.files[0];if(f&&f.type.startsWith('image/'))sendRef(f);});
+document.addEventListener('paste',ev=>{const it=[...(ev.clipboardData.items||[])].find(i=>i.type.startsWith('image/'));if(it){const f=it.getAsFile();if(f)sendRef(f);}});
+$('ref').onclick=()=>$('refFile').click();
 $('refFile').onchange=()=>{const f=$('refFile').files[0];if(f)sendRef(f);};
-function sendRef(file){if(!P)return say('create a project first','err');const fr=new FileReader();fr.onload=async()=>{
+$('refPathBtn').onclick=async()=>{if(!P)return say('create a project first','err');const path=$('refPath').value.trim();if(!path)return;
+  say('reading '+path+'...');const r=await api('set_reference',{name:P.name,path});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();say(r.warning||r.message||'reference saved',r.warning?'warn':'');};
+function sendRef(file){if(!P)return say('create a project first','err');if(!file.type.startsWith('image/'))return say(file.name+' is not an image','err');const fr=new FileReader();fr.onload=async()=>{
   say('uploading reference...');const r=await api('set_reference',{name:P.name,data:fr.result,filename:file.name});
   if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();say(r.warning||r.message||'reference saved',r.warning?'warn':'');};fr.readAsDataURL(file);}
 

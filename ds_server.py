@@ -24,7 +24,7 @@ Ops:
   project_new {name, engine?, promptset?}
   project_get {name}
   project_settings {name, settings}     update settings / prompts
-  set_reference {name, data (base64), filename?}
+  set_reference {name, data (base64) | path (a local file)}
   run {name, force?, only?, engine?}    start the run thread
   cancel {}
   status {}                             the run state (poll)
@@ -192,10 +192,20 @@ class Studio:
 
     def op_set_reference(self, data):
         p = self._project(data)
-        raw = data.get("data") or ""
-        if "," in raw[:64] and raw.startswith("data:"):
-            raw = raw.split(",", 1)[1]
-        blob = base64.b64decode(raw)
+        path = str(data.get("path") or "").strip().strip('"')
+        if path:
+            # Everything is local: a path typed in the page is read by the server. This
+            # is the route that works when the browser cannot open a file dialog (the
+            # desktop app's embedded pane, 2026-10-29).
+            if not os.path.isfile(path):
+                raise FileNotFoundError(f"no such file: {path}")
+            with open(path, "rb") as fh:
+                blob = fh.read()
+        else:
+            raw = data.get("data") or ""
+            if "," in raw[:64] and raw.startswith("data:"):
+                raw = raw.split(",", 1)[1]
+            blob = base64.b64decode(raw)
         if not blob:
             raise ValueError("empty image")
         engine = self._engine_or_none(p.get("engine") or None)

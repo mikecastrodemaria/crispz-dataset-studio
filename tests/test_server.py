@@ -100,6 +100,8 @@ def test_project_flow_over_http(studio):
     # the run refuses without a reference
     r = post(studio, "run", {"name": "http-test"})
     assert not r["ok"] and "reference" in r["error"]
+    r = post(studio, "set_reference", {"name": "http-test", "path": r"C:\nope\missing.png"})
+    assert not r["ok"] and "no such file" in r["error"]
     r = post(studio, "set_reference", {"name": "http-test", "data": data_url()})
     assert r["ok"] and r["project"]["ref_embedding"] and r["warning"] is None
     st, ct, body = get(studio, "/file/http-test/reference.png")
