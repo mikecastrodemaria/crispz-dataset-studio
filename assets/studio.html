@@ -38,12 +38,13 @@ textarea{width:100%;min-height:120px;resize:vertical;font-family:ui-monospace,Co
 #bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;width:100%;position:absolute;left:0;bottom:0}
 #bar i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);margin-right:5px}.dot.on{background:var(--ok)}
-dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;max-width:760px;width:92vw}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;max-width:760px;width:92vw;padding:14px;overflow:hidden}
+#zoom{width:fit-content;max-width:96vw;max-height:96vh;padding:8px}
 dialog::backdrop{background:#000a}dialog h3{margin:0 0 10px}
 .eng{border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:8px}
 .eng .row input[type=text]{flex:1}
 #log{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--mut);max-height:140px;overflow:auto;white-space:pre-wrap}
-#zoom img{max-width:88vw;max-height:84vh;display:block}
+#zoom img{display:block;width:auto;height:auto;max-width:calc(96vw - 16px);max-height:calc(96vh - 60px);object-fit:contain}
 small{color:var(--mut)}
 </style></head><body>
 <header>
@@ -74,11 +75,13 @@ small{color:var(--mut)}
   </div>
   <div class="box"><h2>Prompts</h2>
     <div class="row"><label>Prompt set</label><select id="psSel"></select></div>
+    <div class="row"><label>Subject</label><input type="text" id="subject" placeholder="prefixed to every line: the same woman with red hair" style="flex:1"></div>
     <textarea id="prompts" spellcheck="false"></textarea>
-    <small>One edit instruction per line. The face comes from the reference. {a|b|c} groups are expanded by the engine.</small>
+    <small>One edit instruction per line, the subject phrase is put in front of each. The face comes from the reference. {a|b|c} groups are expanded by the engine. End a line with #noscore when the face cannot be judged (rear view, eyes closed): rendered once, never re-rolled on its score.</small>
   </div>
   <div class="box"><h2>Render</h2>
-    <div class="row"><label>Size</label><input type="number" id="w" step="32"> x <input type="number" id="h" step="32"></div>
+    <div class="row"><label>Size</label><select id="sizeSel" style="flex:1"></select></div>
+    <div class="row" id="sizeCustom"><label></label><input type="number" id="w" step="32" min="64" max="4096"> x <input type="number" id="h" step="32" min="64" max="4096"></div>
     <div class="row"><label>Model</label><input type="text" id="model" placeholder="engine setting (repo or checkpoint file)" style="flex:1"></div>
     <div class="row"><label>Steps</label><input type="number" id="steps" placeholder="engine"><label style="min-width:0">Guidance</label><input type="number" id="guidance" step="0.1" placeholder="engine"></div>
     <div class="row"><label>Likeness min</label><input type="number" id="threshold" min="0" max="100"><label style="min-width:0">Re-rolls</label><input type="number" id="rerolls" min="0" max="10"></div>
@@ -118,6 +121,17 @@ async function api(op,data){const r=await fetch('/api/'+op,{method:'POST',header
 function say(t,cls){$('status').textContent=t||'';$('status').className=cls||'';}
 function logLines(lines){$('log').textContent=(lines||[]).join('\n');$('log').scrollTop=1e9;}
 
+// ---------- sizes ----------
+// The usual training / generation buckets (multiples of 32, the FLUX and Z-Image grid),
+// grouped by ratio, plus 2K. "Custom" shows the W x H fields.
+const SIZES=[['1:1','1024x1024'],['1:1','1536x1536'],['1:1','2048x2048'],['4:5','896x1152'],['5:4','1152x896'],['3:4','832x1216'],['4:3','1216x832'],
+ ['9:16','768x1344'],['16:9','1344x768'],['2:3','832x1248'],['3:2','1248x832'],['9:16 2K','1152x2048'],['16:9 2K','2048x1152'],['21:9','1536x640'],['9:21','640x1536']];
+(function(){const sel=$('sizeSel');SIZES.forEach(([r,wh])=>{const o=document.createElement('option');o.value=wh;o.textContent=`${wh}  (${r})`;sel.appendChild(o);});
+  const o=document.createElement('option');o.value='custom';o.textContent='Custom...';sel.appendChild(o);
+  sel.onchange=()=>{if(sel.value==='custom'){$('sizeCustom').style.display='';$('w').focus();}else{const [w,h]=sel.value.split('x');$('w').value=w;$('h').value=h;$('sizeCustom').style.display='none';}};})();
+function showSize(w,h){const sel=$('sizeSel');const v=`${w}x${h}`;$('w').value=w;$('h').value=h;
+  if(SIZES.some(x=>x[1]===v)){sel.value=v;$('sizeCustom').style.display='none';}else{sel.value='custom';$('sizeCustom').style.display='';}}
+
 // ---------- projects ----------
 async function loadProjects(sel){const r=await api('projects');const s=$('projSel');s.innerHTML='';
   (r.projects||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.done}/${p.cards})`;s.appendChild(o);});
@@ -132,13 +146,13 @@ function fill(){const s=P.settings;
   $('ref').style.display=P.reference?'block':'none';if(P.reference)$('ref').src=`/file/${P.name}/${P.reference}?t=${Date.now()}`;
   $('refInfo').firstElementChild.textContent=P.reference?(P.ref_embedding?`face embedding ready (${P.ref_faces} face(s) on the photo)`:'face not analysed yet (engine was off); done at run start'):'';
   $('engSel').value=P.engine||''; $('psSel').value=s.promptset||'';
-  $('prompts').value=(s.prompts||[]).join('\n'); $('w').value=s.width;$('h').value=s.height;
-  $('model').value=s.model||'';$('steps').value=s.steps??'';$('guidance').value=s.guidance??'';$('threshold').value=s.threshold;$('rerolls').value=s.max_rerolls;
+  $('prompts').value=(s.prompts||[]).join('\n'); showSize(s.width,s.height);
+  $('model').value=s.model||'';$('subject').value=s.subject||'';$('steps').value=s.steps??'';$('guidance').value=s.guidance??'';$('threshold').value=s.threshold;$('rerolls').value=s.max_rerolls;
   $('detail').value=s.detail_faces===null||s.detail_faces===undefined?'':(s.detail_faces?'1':'0');
   $('capsrc').value=s.caption_source;$('trigger').value=s.trigger_word||'';$('expsize').value=String(s.export_size);$('expfmt').value=s.export_format;}
 $('psSel').onchange=async()=>{if(!P)return;const r=await api('project_settings',{name:P.name,settings:{promptset:$('psSel').value}});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();};
 $('saveBtn').onclick=async()=>{if(!P)return;const d=$('detail').value;
-  const settings={prompts:$('prompts').value,model:$('model').value,width:+$('w').value,height:+$('h').value,steps:$('steps').value||null,guidance:$('guidance').value||null,
+  const settings={prompts:$('prompts').value,model:$('model').value,subject:$('subject').value,width:+$('w').value,height:+$('h').value,steps:$('steps').value||null,guidance:$('guidance').value||null,
     threshold:+$('threshold').value,max_rerolls:+$('rerolls').value,detail_faces:d===''?null:d==='1',caption_source:$('capsrc').value,
     trigger_word:$('trigger').value,export_size:+$('expsize').value,export_format:$('expfmt').value};
   const r=await api('project_settings',{name:P.name,settings,engine:$('engSel').value});
@@ -189,7 +203,7 @@ async function poll(){clearTimeout(POLL);const r=await api('status');const s=r.s
   lastRunning=!!s.running;POLL=setTimeout(poll,s.running?1500:6000);}
 
 // ---------- cards ----------
-function badge(c){if(c.score===null||c.score===undefined)return '';const cls=c.score>=(P.settings.threshold||0)?'ok':(c.score>0?'low':'zero');return `<span class="badge ${cls}">${c.score}</span>`;}
+function badge(c){if(c.scored===false&&c.file)return `<span class="badge" title="unscored line: the face model cannot judge it">n/s ${c.score??''}</span>`;if(c.score===null||c.score===undefined)return '';const cls=c.score>=(P.settings.threshold||0)?'ok':(c.score>0?'low':'zero');return `<span class="badge ${cls}">${c.score}</span>`;}
 function renderCards(current){if(!P)return;const el=$('cards');el.innerHTML='';
   P.cards.forEach(c=>{const d=document.createElement('div');d.className='card '+(c.status||'')+(c.index===current?' rendering':'');
     const img=c.file?`<img src="/file/${P.name}/${c.file}" data-i="${c.index}">`:`<span>${c.status==='rendering'||c.index===current?'rendering...':(c.status==='failed'?'failed':'pending')}</span>`;

@@ -79,6 +79,16 @@ def test_caption_compose_and_prompt_fallback(tmp_path):
     assert r["source_used"] == "prompt" and "fell back" in r["warning"]
 
 
+def test_split_line_and_engine_prompt():
+    assert ds_project.split_line("a, b #noscore") == ("a, b", False, "marked #noscore")
+    t, scored, why = ds_project.split_line("same person, rear view, walking away")
+    assert not scored and "rear view" in why
+    assert ds_project.split_line("same person, smiling") == ("same person, smiling", True, None)
+    assert ds_project.engine_prompt("close-up #noscore", {"subject": " the same  woman, "}) \
+        == "the same woman, close-up"
+    assert ds_project.engine_prompt("close-up", {}) == "close-up"
+
+
 # ---------------------------------------------------------------- project files
 def test_create_load_settings_and_card_rebuild(projects):
     p = ds_project.create("My Hero!", engine="fake")
@@ -127,18 +137,24 @@ def test_full_run_rerolls_and_resume(projects, engines):
     p = ds_project.create("run", engine="fake")
     ds_project.update_settings(p, {"prompts": ["same person, close-up",
                                                "same person, DRIFT far away",
-                                               "same person, FAIL this one"],
+                                               "same person, FAIL this one",
+                                               "same person, DRIFT rear view #noscore"],
                                    "threshold": 90, "max_rerolls": 2, "width": 64, "height": 64,
-                                   "trigger_word": "ohwx"})
+                                   "trigger_word": "ohwx", "subject": "the hero"})
     p, _ = ds_project.set_reference(ds_project.load("run"), png_bytes(), engine=None)
     runner = ds_project.RUNNER
     r = runner.start("run", engines, {}, force=False)
-    assert r["ok"] and r["started"] and r["total"] == 3
+    assert r["ok"] and r["started"] and r["total"] == 4
     assert runner.wait(60)
     st = runner.status()
-    assert st["ok"] is True and st["done"] == 3, st
+    assert st["ok"] is True and st["done"] == 4, st
     p = ds_project.load("run")
-    c1, c2, c3 = p["cards"]
+    c1, c2, c3, c4 = p["cards"]
+    # card 4: unscored -> one try only although it drifts, no threshold warning,
+    # the caption carries the line without the mark and without the subject
+    assert c4["status"] == "done" and len(c4["tries"]) == 1 and c4["scored"] is False
+    assert not any("below" in w for w in c4["warnings"]) and c4["detail"]["unscored"]
+    assert c4["caption"] == "ohwx, same person, DRIFT rear view"
     # the reference face was analysed at run start
     assert len(p["ref_embedding"]) == 512
     # card 1: same colour -> high likeness on the first try, caption = trigger + prompt
@@ -159,7 +175,7 @@ def test_full_run_rerolls_and_resume(projects, engines):
     # nothing to do once everything is done / only failed left? reject card 1 -> rendered again
     ds_project.update_card(ds_project.load("run"), 1, status="rejected")
     r = runner.start("run", engines, {}, force=False)
-    assert r["total"] == 2          # the rejected one + the failed one
+    assert r["total"] == 2          # the rejected one + the failed one (card 4 is done)
     runner.wait(30)
     p = ds_project.load("run")
     assert p["cards"][0]["status"] == "done" and len(p["cards"][0]["tries"]) == 2

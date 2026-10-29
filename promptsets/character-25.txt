@@ -5,24 +5,26 @@
 # {a|b|c} groups are expanded by the engine (dynamic-prompts syntax, seed-bound).
 # Coverage: framing (close / medium / full), angles (front / 3/4 / profile / rear),
 # expressions, hair, poses, indoor / outdoor, lighting.
+# A line ending with #noscore is rendered once and never re-rolled on its likeness:
+# the face model cannot judge a rear view or closed eyes.
 same person, close-up portrait, facing the camera, neutral expression, soft studio light, plain grey background
 same person, close-up portrait, three-quarter view, slight smile, window daylight, indoor
 same person, close-up portrait, left profile, calm expression, warm lamp light, dark background
 same person, close-up portrait, right profile, looking slightly down, overcast daylight, outdoor
-same person, close-up, laughing with eyes closed, golden hour backlight, outdoor park
+same person, close-up, laughing with eyes closed, golden hour backlight, outdoor park #noscore
 same person, close-up, surprised expression, eyebrows raised, bright flash photo, white wall
 same person, close-up, serious look straight into the lens, dramatic side light, black background
 same person, medium shot, arms crossed, standing, {white t-shirt|black turtleneck|denim jacket}, city street, daylight
 same person, medium shot, three-quarter view, hands in pockets, casual hoodie, brick wall, afternoon light
 same person, medium shot, seated at a wooden table, holding a coffee cup, cafe interior, warm light
 same person, medium shot, leaning on a railing, looking away, seaside, windy, overcast
-same person, medium shot from behind, head turned over the shoulder toward the camera, forest path
+same person, medium shot from behind, head turned over the shoulder toward the camera, forest path #noscore
 same person, medium shot, wearing a formal {dark suit|elegant blouse}, office lobby, cool neutral light
 same person, medium shot, wearing sunglasses pushed up on the head, summer clothes, beach boardwalk, harsh noon sun
 same person, full body, standing relaxed, sneakers and jeans, empty parking lot, late afternoon
 same person, full body, walking toward the camera, long coat, rainy street with reflections, evening
 same person, full body, sitting on stairs, elbows on knees, urban stairway, soft shade
-same person, full body, three-quarter rear view, walking away, autumn trees, sunlight through leaves
+same person, full body, three-quarter rear view, walking away, autumn trees, sunlight through leaves #noscore
 same person, full body, stretching arms up, sportswear, gym interior, bright even light
 same person, full body, crouching to tie a shoe, running track, morning light
 same person, close-up, hair tied back, no makeup look, bathroom mirror, cool white light

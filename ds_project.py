@@ -55,7 +55,38 @@ DEFAULT_SETTINGS = {
     # switch: klein calls set_zimage_model). Empty = the engine's own setting. Added
     # on 2026-10-29 so a dataset can run on klein-4B while the user's app stays on 9B.
     "model": "",
+    # Prefixed to EVERY line sent to the engine ("the same black panther humanoid with
+    # a hair bun, "): the identity phrase. "same person" alone loses a non-human
+    # character's traits on close-ups (25-shot run of 2026-10-29). Captions do not
+    # carry it: the trigger word is the training-side identity.
+    "subject": "",
 }
+
+# A line the face model cannot judge (rear view, closed eyes, face hidden): the card
+# is rendered once, shown as "unscored", never re-rolled on its score. Explicit with
+# a trailing #noscore, or guessed from the wording (announced per card).
+NOSCORE_MARK = "#noscore"
+NOSCORE_WORDS = ("rear view", "from behind", "walking away", "back to the camera",
+                 "eyes closed", "face hidden", "facing away")
+
+
+def split_line(prompt):
+    """(text without the mark, scored: bool, reason or None)."""
+    t = (prompt or "").strip()
+    if t.lower().endswith(NOSCORE_MARK):
+        return t[:-len(NOSCORE_MARK)].rstrip(" ,"), False, "marked #noscore"
+    low = t.lower()
+    for w in NOSCORE_WORDS:
+        if w in low:
+            return t, False, f"'{w}' in the line: the face model cannot judge it"
+    return t, True, None
+
+
+def engine_prompt(prompt, settings):
+    """The line as the engine gets it: subject prefix + text without the mark."""
+    text, _, _ = split_line(prompt)
+    subj = " ".join(((settings or {}).get("subject") or "").split()).rstrip(" ,")
+    return f"{subj}, {text}" if subj and text else (subj or text)
 
 _LOCK = threading.RLock()
 _LOG_HOOK = None
@@ -75,7 +106,8 @@ def _log(msg):
 # Prompt sets
 # ----------------------------------------------------------------------------
 def parse_promptset(text):
-    """One prompt per non-empty, non-comment line."""
+    """One prompt per non-empty, non-comment line (a trailing #noscore is kept: it is
+    part of the line, see split_line)."""
     out = []
     for line in (text or "").splitlines():
         s = line.strip()
@@ -178,13 +210,15 @@ def _rebuild_cards(p):
     cards = []
     for i, prompt in enumerate(p["settings"].get("prompts") or [], start=1):
         c = old.get(i)
+        _, scored, _ = split_line(prompt)
         if c and c.get("prompt") == prompt:
+            c["scored"] = scored
             cards.append(c)
         else:
             cards.append({"index": i, "prompt": prompt, "status": "pending", "file": "",
                           "seed": None, "score": None, "detail": {}, "tries": [],
                           "caption": "", "caption_source_used": "", "warnings": [],
-                          "error": ""})
+                          "error": "", "scored": scored})
     p["cards"] = cards
 
 
@@ -210,6 +244,7 @@ def update_settings(p, new):
     s["steps"] = int(s["steps"]) if s.get("steps") not in (None, "", 0, "0") else None
     s["guidance"] = float(s["guidance"]) if s.get("guidance") not in (None, "") else None
     s["model"] = str(s.get("model") or "").strip()
+    s["subject"] = " ".join(str(s.get("subject") or "").split())
     if s.get("caption_source") not in ("prompt", "ollama", "both"):
         s["caption_source"] = "prompt"
     if s.get("export_format") not in ("png", "jpg"):
@@ -384,12 +419,17 @@ class Runner:
         idx = card["index"]
         card.update({"status": "rendering", "error": "", "warnings": []})
         best = None
-        n_tries = 1 + int(s.get("max_rerolls") or 0)
+        text, scored, why = split_line(card["prompt"])
+        card["scored"] = scored
+        n_tries = (1 + int(s.get("max_rerolls") or 0)) if scored else 1
+        if not scored:
+            self._say(f"card {idx:03d}: unscored ({why}): one try, kept as is")
+        prompt = engine_prompt(card["prompt"], s)
         for t in range(1, n_tries + 1):
             if self.cancel_flag and t > 1:
                 break
             seed = random.randint(0, 2 ** 31 - 1)
-            spec = {"prompt": card["prompt"], "input": ref, "refs": [ref],
+            spec = {"prompt": prompt, "input": ref, "refs": [ref],
                     "width": int(s["width"]), "height": int(s["height"]), "seed": seed,
                     "out_dir": os.path.join(d, "cards")}
             if (s.get("model") or "").strip():
@@ -442,7 +482,7 @@ class Runner:
                       f"{tr['time_s']} s")
             if best is None or score > best["score"]:
                 best = tr
-            if score >= int(s.get("threshold") or 0):
+            if not scored or score >= int(s.get("threshold") or 0):
                 break
         if best is None:
             card["status"] = "failed"
@@ -450,12 +490,13 @@ class Runner:
             return
         card.update({"status": "done", "file": best["file"], "seed": best["seed"],
                      "score": best["score"], "detail": best["detail"]})
-        if best["score"] < int(s.get("threshold") or 0):
+        if not scored:
+            card["detail"] = dict(best["detail"], unscored=why)
+        elif best["score"] < int(s.get("threshold") or 0):
             card["warnings"].append(f"best of {len(card['tries'])} tries is below the "
                                     f"threshold ({best['score']} < {s.get('threshold')}): "
                                     f"review it")
-        cap = ds_captions.caption_for(os.path.join(d, best["file"]), card["prompt"],
-                                      s, ollama_cfg)
+        cap = ds_captions.caption_for(os.path.join(d, best["file"]), text, s, ollama_cfg)
         card["caption"] = cap["caption"]
         card["caption_source_used"] = cap["source_used"]
         if cap.get("warning"):
