@@ -164,8 +164,15 @@ class Studio:
         return r
 
     def op_ollama_models(self, data):
-        return {"models": ds_captions.ollama_models((self.config.get("ollama") or {}).get("url")
-                                                    or ds_captions.DEFAULT_URL)}
+        """The VISION models only (Ollama's own capability flag): the captioner has to
+        look at the card. `all` = true lists every installed model for reference."""
+        url = (self.config.get("ollama") or {}).get("url") or ds_captions.DEFAULT_URL
+        allm = ds_captions.ollama_models(url)
+        vis = ds_captions.ollama_vision_models(url) if allm else []
+        return {"models": vis, "installed": len(allm),
+                "message": (None if vis or not allm else
+                            f"{len(allm)} Ollama model(s) installed, none with the vision "
+                            f"capability: pull a vision model (llava, qwen3-vl, gemma3...)")}
 
     def op_promptsets(self, data):
         return {"promptsets": ds_project.list_promptsets()}

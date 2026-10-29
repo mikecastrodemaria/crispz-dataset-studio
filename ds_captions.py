@@ -39,14 +39,54 @@ def _ollama(url, payload, timeout):
         return json.loads(r.read().decode("utf-8"))
 
 
+def _get_json(url, path, payload=None, timeout=5):
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    full = f"{url.rstrip('/')}{path}"
+    if payload is None:
+        with opener.open(full, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    req = urllib.request.Request(full, data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"})
+    with opener.open(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
 def ollama_models(url=DEFAULT_URL, timeout=4):
+    """Every installed model (names)."""
     try:
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(f"{url.rstrip('/')}/api/tags", timeout=timeout) as r:
-            j = json.loads(r.read().decode("utf-8"))
+        j = _get_json(url, "/api/tags", timeout=timeout)
         return [m.get("name") for m in j.get("models", []) if m.get("name")]
     except Exception:
         return []
+
+
+# Names that are multimodal for sure, used when /api/show gives no capabilities (an
+# old Ollama) and to put the reliable choices first. Same rule as the family's
+# cz_ollama._ollama_vision_models: we trust Ollama's 'vision' capability, never the
+# 'families' field (clip in a text model's family is a false positive).
+_VISION_NAME = ("llava", "-vl", "vl:", "moondream", "minicpm-v", "bakllava",
+                "llama3.2-vision", "llama-3.2-vision")
+
+
+def ollama_vision_models(url=DEFAULT_URL, timeout=4, show=None):
+    """The models that can look at an image, reliable ones first. `show` lets the
+    tests inject /api/show answers ({name: info})."""
+    names = ollama_models(url, timeout)
+    vision = []
+    for n in names:
+        try:
+            info = show[n] if show is not None else _get_json(url, "/api/show", {"model": n},
+                                                                timeout=8)
+            caps = [c.lower() for c in (info.get("capabilities") or [])]
+            if "vision" in caps:
+                vision.append(n)
+            elif not info.get("capabilities") and any(k in n.lower() for k in _VISION_NAME):
+                vision.append(n)
+        except Exception:
+            if any(k in n.lower() for k in _VISION_NAME):
+                vision.append(n)
+    vision.sort(key=lambda n: 0 if any(k in n.lower() for k in _VISION_NAME) else 1)
+    return vision
 
 
 def describe(image_path, cfg, timeout=180):
@@ -54,9 +94,9 @@ def describe(image_path, cfg, timeout=180):
     url = (cfg or {}).get("url") or DEFAULT_URL
     model = (cfg or {}).get("model") or ""
     if not model:
-        models = ollama_models(url)
+        models = ollama_vision_models(url)
         if not models:
-            return {"ok": False, "error": "Ollama not reachable or no model installed"}
+            return {"ok": False, "error": "Ollama not reachable or no vision model installed"}
         model = models[0]
     try:
         with open(image_path, "rb") as f:

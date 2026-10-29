@@ -109,7 +109,8 @@ small{color:var(--mut)}
   <button id="addEng">Add engine</button>
   <h3 style="margin-top:14px">Ollama (captions)</h3>
   <div class="row"><label>URL</label><input type="text" id="olUrl" style="flex:1"></div>
-  <div class="row"><label>Model</label><select id="olModel"><option value="">first installed</option></select></div>
+  <div class="row"><label>Model</label><select id="olModel"><option value="">first vision model</option></select></div>
+  <small id="olMsg"></small>
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="setCancel">Close</button><button id="setSave" class="primary">Save</button></div>
   <small id="setMsg"></small>
 </dialog>
@@ -256,8 +257,9 @@ function engRow(name,e){const d=document.createElement('div');d.className='eng';
 $('settingsBtn').onclick=async()=>{const r=await api('config_get');CFG=r.config;const l=$('engList');l.innerHTML='';
   Object.entries(CFG.engines||{}).forEach(([n,e])=>l.appendChild(engRow(n,e)));
   $('olUrl').value=(CFG.ollama||{}).url||'http://127.0.0.1:11434';
-  const m=await api('ollama_models');const s=$('olModel');s.innerHTML='<option value="">first installed</option>';(m.models||[]).forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent=x;s.appendChild(o);});
-  s.value=(CFG.ollama||{}).model||'';$('setMsg').textContent=r.exists?`writes ${r.config_file}`:`no config.json yet: Save creates ${r.config_file}`;$('settings').showModal();};
+  const m=await api('ollama_models');const s=$('olModel');s.innerHTML='<option value="">first vision model</option>';(m.models||[]).forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent=x;s.appendChild(o);});
+  const cur=(CFG.ollama||{}).model||'';if(cur&&!(m.models||[]).includes(cur)){const o=document.createElement('option');o.value=cur;o.textContent=cur+' (not a vision model, or not installed)';s.appendChild(o);}
+  s.value=cur;$('olMsg').textContent=m.message||((m.models||[]).length?`${m.models.length} vision model(s) of ${m.installed} installed`:(m.installed?'' :'Ollama not reachable'));$('setMsg').textContent=r.exists?`writes ${r.config_file}`:`no config.json yet: Save creates ${r.config_file}`;$('settings').showModal();};
 $('addEng').onclick=()=>$('engList').appendChild(engRow('',{url:'http://127.0.0.1:7861',launch:true}));
 $('setCancel').onclick=()=>$('settings').close();
 $('setSave').onclick=async()=>{const engines={};$('engList').querySelectorAll('.eng').forEach(d=>{const n=d.querySelector('.n').value.trim();if(!n)return;

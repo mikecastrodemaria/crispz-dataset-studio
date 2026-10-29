@@ -89,6 +89,18 @@ def test_split_line_and_engine_prompt():
     assert ds_project.engine_prompt("close-up", {}) == "close-up"
 
 
+def test_ollama_vision_filter(monkeypatch):
+    monkeypatch.setattr(ds_captions, "ollama_models",
+                        lambda url=None, timeout=4: ["qwen3.6:latest", "gemma4:26b",
+                                                     "llava:13b", "old-vl:7b", "bert"])
+    show = {"qwen3.6:latest": {"capabilities": ["completion", "tools"]},
+            "gemma4:26b": {"capabilities": ["completion", "vision"]},
+            "llava:13b": {"capabilities": ["completion", "vision"]},
+            "old-vl:7b": {},                       # an old Ollama: no capabilities field
+            "bert": {"capabilities": ["embedding"]}}
+    assert ds_captions.ollama_vision_models(show=show) == ["llava:13b", "old-vl:7b", "gemma4:26b"]
+
+
 # ---------------------------------------------------------------- project files
 def test_create_load_settings_and_card_rebuild(projects):
     p = ds_project.create("My Hero!", engine="fake")
