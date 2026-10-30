@@ -378,7 +378,15 @@ class Runner:
             return True
         return False
 
-    def start(self, name, engines, ollama_cfg, force=False, only=None, engine_name=None):
+    def start(self, name, engines, ollama_cfg, force=False, only=None, engine_name=None,
+              seed=None):
+        """force on the WHOLE project (only=None) renders every card from scratch: its
+        earlier tries are deleted. force on some cards (only=...) is the Re-roll: the
+        card gets more tries and keeps the earlier ones, but only those rendered with
+        the same engine prompt and model; a try made under another subject or model is
+        dropped, it has no business in 'best of'. (The 25-card run of 2026-10-29 kept
+        three tries of a previous subject per card.) seed = a base seed: try t of every
+        card uses seed + t - 1, so two runs compare like for like (an A/B of models)."""
         with self.lock:
             if self.state["running"]:
                 return {"ok": False, "error": "a run is already in progress"}
@@ -395,8 +403,10 @@ class Runner:
                                "total": len(todo), "current": None, "text": "",
                                "ok": None, "error": "", "started": time.time(),
                                "finished": None, "log": []})
+            fresh = bool(force) and only is None
             self.thread = threading.Thread(
-                target=self._run, args=(p, engines, ollama_cfg, todo, engine_name),
+                target=self._run, args=(p, engines, ollama_cfg, todo, engine_name, fresh,
+                                        None if seed is None else int(seed)),
                 daemon=True, name="ds-run")
             self.thread.start()
             return {"ok": True, "started": True, "total": len(todo)}
@@ -407,7 +417,7 @@ class Runner:
         return not self.state["running"]
 
     # -- the loop -------------------------------------------------------------
-    def _run(self, p, engines, ollama_cfg, todo, engine_name):
+    def _run(self, p, engines, ollama_cfg, todo, engine_name, fresh=False, base_seed=None):
         try:
             name = engine_name or p.get("engine") or None
             self._say(f"engine: checking {name or engines.default}")
@@ -437,7 +447,7 @@ class Runner:
                     self._say(f"cancelled after {n - 1} card(s)")
                     break
                 self.state["current"] = card["index"]
-                self._render_card(engine, p, card, ref, d, s, ollama_cfg)
+                self._render_card(engine, p, card, ref, d, s, ollama_cfg, fresh, base_seed)
                 save(p)
                 self.state["done"] = n
             self.state["ok"] = not self.cancel_flag
@@ -450,7 +460,29 @@ class Runner:
             self.state["current"] = None
             self.state["finished"] = time.time()
 
-    def _render_card(self, engine, p, card, ref, d, s, ollama_cfg):
+    def _drop_stale_tries(self, card, d, prompt, model, fresh):
+        """Removes the tries (and their files) that cannot compete with the ones about
+        to be rendered: all of them on a fresh run, those of another prompt or model
+        otherwise. Tries from before this rule (no 'prompt' recorded) count as stale."""
+        keep, gone = [], []
+        for tr in card.get("tries") or []:
+            same = (tr.get("prompt") == prompt and (tr.get("model") or "") == model)
+            (gone if fresh or not same else keep).append(tr)
+        for tr in gone:
+            try:
+                os.remove(os.path.join(d, tr["file"]))
+            except OSError:
+                pass
+        card["tries"] = keep
+        if gone:
+            self._say(f"card {card['index']:03d}: {len(gone)} earlier try(ies) dropped "
+                      f"({'fresh run' if fresh else 'another subject, prompt or model'})")
+        # the file names follow the try count: with tries removed, a new name is picked
+        # past every file still on disk, so nothing is overwritten
+        return keep
+
+    def _render_card(self, engine, p, card, ref, d, s, ollama_cfg, fresh=False,
+                     base_seed=None):
         idx = card["index"]
         card.update({"status": "rendering", "error": "", "warnings": []})
         best = None
@@ -460,10 +492,12 @@ class Runner:
         if not scored:
             self._say(f"card {idx:03d}: unscored ({why}): one try, kept as is")
         prompt = engine_prompt(card["prompt"], s)
+        model = (s.get("model") or "").strip()
+        self._drop_stale_tries(card, d, prompt, model, fresh)
         for t in range(1, n_tries + 1):
             if self.cancel_flag and t > 1:
                 break
-            seed = random.randint(0, 2 ** 31 - 1)
+            seed = (base_seed + t - 1) if base_seed is not None else random.randint(0, 2 ** 31 - 1)
             spec = {"prompt": prompt, "input": ref, "refs": [ref],
                     "width": int(s["width"]), "height": int(s["height"]), "seed": seed,
                     "out_dir": os.path.join(d, "cards")}
@@ -491,7 +525,10 @@ class Runner:
                 card["status"] = "failed"
                 card["error"] = f"engine returned no image file ({src})"
                 return
-            dst_name = f"{idx:03d}_t{len(card['tries']) + 1}.png"
+            k = len(card["tries"]) + 1
+            while os.path.exists(os.path.join(d, "cards", f"{idx:03d}_t{k}.png")):
+                k += 1
+            dst_name = f"{idx:03d}_t{k}.png"
             dst = os.path.join(d, "cards", dst_name)
             if os.path.abspath(src) != os.path.abspath(dst):
                 shutil.move(src, dst)
@@ -509,7 +546,7 @@ class Runner:
             else:
                 score, detail = 0, {"reason": f"faces: {fr.get('error')}"}
             tr = {"file": f"cards/{dst_name}", "seed": r.get("seed_used", seed),
-                  "score": score, "detail": detail,
+                  "score": score, "detail": detail, "prompt": prompt, "model": model,
                   "time_s": round(time.time() - t0, 1)}
             card["tries"].append(tr)
             self._say(f"card {idx:03d} try {t}: likeness {score} "

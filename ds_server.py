@@ -233,7 +233,8 @@ class Studio:
             only = {int(i) for i in only}
         return self.runner.start(name, self.engines, self.config.get("ollama") or {},
                                  force=bool(data.get("force")), only=only,
-                                 engine_name=data.get("engine") or None)
+                                 engine_name=data.get("engine") or None,
+                                 seed=data.get("seed"))
 
     def op_cancel(self, data):
         return {"cancelled": self.runner.cancel()}

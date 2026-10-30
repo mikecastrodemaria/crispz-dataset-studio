@@ -198,6 +198,29 @@ def test_full_run_rerolls_and_resume(projects, engines):
     r = runner.start("run", engines, {}, force=True, only={2})
     assert r["total"] == 1
     runner.wait(30)
+    # a re-roll after a subject change drops the tries of the old subject (their files
+    # too), a re-roll with the same settings keeps them (the user may pick one back)
+    p = ds_project.load("run")
+    old_files = [t["file"] for t in p["cards"][0]["tries"]]
+    assert len(old_files) == 2
+    ds_project.update_settings(p, {"subject": "another hero"})
+    runner.start("run", engines, {}, force=True, only={1})
+    runner.wait(30)
+    p = ds_project.load("run")
+    assert len(p["cards"][0]["tries"]) == 1
+    cards_dir = os.path.join(ds_project.project_dir("run"), "cards")
+    assert [f for f in os.listdir(cards_dir) if f.startswith("001_")] == ["001_t1.png"]
+    assert p["cards"][0]["tries"][0]["prompt"].startswith("another hero")
+    runner.start("run", engines, {}, force=True, only={1})
+    runner.wait(30)
+    assert len(ds_project.load("run")["cards"][0]["tries"]) == 2
+    # a forced run of the whole project starts every card from scratch, with the base
+    # seed the tries are replayable: try t = seed + t - 1
+    runner.start("run", engines, {}, force=True, seed=1000)
+    runner.wait(60)
+    p = ds_project.load("run")
+    assert len(p["cards"][0]["tries"]) == 1 and p["cards"][0]["tries"][0]["seed"] == 1000
+    assert [t["seed"] for t in p["cards"][1]["tries"]] == [1000, 1001, 1002]
 
 
 def test_run_refuses_without_reference_and_when_busy(projects, engines):
