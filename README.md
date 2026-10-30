@@ -134,6 +134,34 @@ on the real engine (the raw cosine is kept per try in `project.json`).
   profiles and small faces (27 to 36), and a full-body try takes 60 to 100 s.
   klein-4B is the fastest and holds the middle. So the default engine for a
   character dataset is flux3 when the card fits (19 GB), klein-4B otherwise.
+
+  The flux3 lot, left to right: the reference, card 001 (close-up, 94), card 013
+  (office, 95; the engine drew "elegant blouse" from the `{dark suit|elegant blouse}`
+  group), card 020 (crouching, 92):
+
+  ![crispz-flux3: the reference and three cards of the 25-card run](assets/flux3-reference-and-cards.jpg)
+
+  The 25 cards with their likeness (n/s = not scored: laughing, back view, eyes
+  closed, the face model cannot judge them). Every card is the first try:
+
+  ![crispz-flux3: the 25 cards with their likeness score](assets/flux3-25-cards.jpg)
+
+  | card | 001 | 002 | 003 | 004 | 005 | 006 | 007 | 008 | 009 | 010 | 011 | 012 | 013 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | likeness | 94 | 72 | 64 | 59 | n/s | 70 | 80 | 92 | 92 | 93 | 57 | n/s | 95 |
+
+  | card | 014 | 015 | 016 | 017 | 018 | 019 | 020 | 021 | 022 | 023 | 024 | 025 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | likeness | 64 | 87 | 84 | 78 | n/s | 87 | 92 | 62 | 74 | 80 | 92 | 69 |
+
+  Exported as `out/2026-10-30/trial-flux3_<stamp>/`: 25 pairs `NNN.png` (683x1024,
+  long side 1024) + `NNN.txt`, and the ZIP beside it. The test suite on the same day:
+
+  ```
+  python -m pytest tests -q
+  ...........................                                              [100%]
+  27 passed in 48.20s
+  ```
 - Family fix shipped with it: `cli_faces` imported a function that did not exist in
   klein and flux3 (`detect_faces_full`), so no client could get embeddings.
 - Later: a `dataset` op in the family protocol so the same run can be driven without
