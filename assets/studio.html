@@ -169,21 +169,32 @@ $('newProj').onclick=async()=>{const name=prompt('Project name (letters, digits,
   const r=await api('project_new',{name,engine:$('engSel').value||undefined});if(!r.ok)return say(r.error,'err');await loadProjects(r.project.name);};
 $('projSel').onchange=()=>openProject($('projSel').value);
 
-function fill(){const s=P.settings;
-  $('ref').style.display=P.reference?'block':'none';if(P.reference)$('ref').src=`/file/${P.name}/${P.reference}?t=${Date.now()}`;
-  $('refInfo').firstElementChild.textContent=P.reference?(P.ref_embedding?`face embedding ready (${P.ref_faces} face(s) on the photo)`:'face not analysed yet (engine was off); done at run start'):'';
+// The settings fields are filled when a project is OPENED or its prompt set changes,
+// never from the poll: filling them every 1.5 s during a run erased what was being typed
+// (Subject reset, a name typed over "same person" put back, 2026-10-30). The reference
+// block alone follows the run (its embedding is computed at run start).
+function fillRef(){$('ref').style.display=P.reference?'block':'none';if(P.reference)$('ref').src=`/file/${P.name}/${P.reference}?t=${Date.now()}`;
+  $('refInfo').firstElementChild.textContent=P.reference?(P.ref_embedding?`face embedding ready (${P.ref_faces} face(s) on the photo)`:'face not analysed yet (engine was off); done at run start'):'';}
+function fill(){const s=P.settings;fillRef();
   $('engSel').value=P.engine||''; $('psSel').value=s.promptset||'';
   $('prompts').value=(s.prompts||[]).join('\n'); showSize(s.width,s.height);
   showModel(s.model||'');$('subject').value=s.subject||'';$('steps').value=s.steps??'';$('guidance').value=s.guidance??'';$('threshold').value=s.threshold;$('rerolls').value=s.max_rerolls;
   $('detail').value=s.detail_faces===null||s.detail_faces===undefined?'':(s.detail_faces?'1':'0');
   $('capsrc').value=s.caption_source;$('trigger').value=s.trigger_word||'';$('expsize').value=String(s.export_size);$('expfmt').value=s.export_format;}
 $('psSel').onchange=async()=>{if(!P)return;const r=await api('project_settings',{name:P.name,settings:{promptset:$('psSel').value}});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();};
-$('saveBtn').onclick=async()=>{if(!P)return;const d=$('detail').value;
+async function saveSettings(){if(!P)return;const d=$('detail').value;
   const settings={prompts:$('prompts').value,model:$('model').value,subject:$('subject').value,width:+$('w').value,height:+$('h').value,steps:$('steps').value||null,guidance:$('guidance').value||null,
     threshold:+$('threshold').value,max_rerolls:+$('rerolls').value,detail_faces:d===''?null:d==='1',caption_source:$('capsrc').value,
     trigger_word:$('trigger').value,export_size:+$('expsize').value,export_format:$('expfmt').value};
   const r=await api('project_settings',{name:P.name,settings,engine:$('engSel').value});
-  if(!r.ok){$('saveMsg').textContent=r.error;return;}P=r.project;$('saveMsg').textContent='saved';setTimeout(()=>$('saveMsg').textContent='',1500);renderCards();loadProjects(P.name);};
+  if(!r.ok){$('saveMsg').textContent=r.error;say(r.error,'warn');return;}P=r.project;$('saveMsg').textContent='saved';setTimeout(()=>$('saveMsg').textContent='',1500);renderCards();projectLabel();}
+$('saveBtn').onclick=saveSettings;
+// Autosave: any settings control of the side panel saves on change (Enter or leaving the
+// field). The prompt set select has its own handler (it reloads the lines), the file path
+// field is not a setting. During a run the server refuses and says so, nothing is lost.
+document.querySelector('aside').addEventListener('change',ev=>{const t=ev.target;if(!t||!t.id||['psSel','refPath','refFile'].includes(t.id))return;
+  if(t.closest('.box')&&['INPUT','SELECT','TEXTAREA'].includes(t.tagName))saveSettings();});
+function projectLabel(){if(!P)return;const o=[...$('projSel').options].find(o=>o.value===P.name);if(o)o.textContent=`${P.name} (${P.cards.filter(c=>c.status==='done').length}/${P.cards.length})`;}
 $('engSel').onchange=async()=>{if(P){await api('project_settings',{name:P.name,settings:{},engine:$('engSel').value});P.engine=$('engSel').value;}refreshEngines();};
 
 // ---------- reference ----------
@@ -226,8 +237,8 @@ async function poll(){clearTimeout(POLL);const r=await api('status');const s=r.s
   $('cancelBtn').disabled=!s.running;$('runBtn').disabled=!!s.running;
   $('bar').firstElementChild.style.width=s.total?Math.round(100*s.done/s.total)+'%':'0';
   if(s.text)say((s.running?'':'')+s.text,s.ok===false?'err':'');logLines(s.log);
-  if(s.running||lastRunning){if(P&&s.project===P.name){const pr=await api('project_get',{name:P.name});if(pr.ok){P=pr.project;renderCards(s.current);fill();}}}
-  if(!s.running&&lastRunning){loadProjects(P&&P.name);refreshEngines();}
+  if(s.running||lastRunning){if(P&&s.project===P.name){const pr=await api('project_get',{name:P.name});if(pr.ok){P=pr.project;renderCards(s.current);fillRef();projectLabel();}}}
+  if(!s.running&&lastRunning){refreshEngines();}
   lastRunning=!!s.running;POLL=setTimeout(poll,s.running?1500:6000);}
 
 // ---------- cards ----------
