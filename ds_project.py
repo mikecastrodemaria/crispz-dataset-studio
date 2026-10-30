@@ -132,6 +132,31 @@ def split_line(prompt):
     return t, True, None
 
 
+def resolved_text(image_path, text, settings):
+    """The card's text as the engine really rendered it. The engines expand the
+    {a|b|c} groups and __wildcards__ of a prompt themselves, bound to the seed, and
+    the protocol result does not carry the expanded line: only the PNG does, in the
+    "crispz" chunk (json, key "prompt", subject prefix included). Exported lot of
+    2026-10-30: two captions still read "{dark suit|elegant blouse}", so the
+    caption is built from that chunk when the line has a group or a wildcard. The
+    raw text is kept when the chunk is missing (another engine, a copied file)."""
+    if "{" not in (text or "") and "__" not in (text or ""):
+        return text
+    try:
+        from PIL import Image
+        with Image.open(image_path) as im:
+            meta = json.loads(im.info.get("crispz") or "{}")
+    except Exception:
+        return text
+    used = " ".join((meta.get("prompt") or "").split())
+    if not used:
+        return text
+    subj = " ".join(((settings or {}).get("subject") or "").split()).rstrip(" ,")
+    if subj and used.startswith(subj + ", "):
+        return used[len(subj) + 2:]
+    return used
+
+
 def engine_prompt(prompt, settings):
     """The line as the engine gets it: subject prefix + text without the mark."""
     text, _, _ = split_line(prompt)
@@ -598,6 +623,7 @@ class Runner:
             card["warnings"].append(f"best of {len(card['tries'])} tries is below the "
                                     f"threshold ({best['score']} < {s.get('threshold')}): "
                                     f"review it")
+        text = resolved_text(os.path.join(d, best["file"]), text, s)
         cap = ds_captions.caption_for(os.path.join(d, best["file"]), text, s, ollama_cfg)
         card["caption"] = cap["caption"]
         card["caption_source_used"] = cap["source_used"]

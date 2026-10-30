@@ -304,6 +304,25 @@ def test_artifact_check_asks_ollama_and_prefers_a_clean_try(projects, engines, m
     assert c["tries"][0]["detail"]["artifact"].startswith("YES")
 
 
+def test_caption_takes_the_group_the_engine_drew(projects, engines):
+    p = ds_project.create("grp", engine="fake")
+    ds_project.update_settings(p, {"prompts": ["same person, {red|blue} coat"], "subject": "the same woman",
+                                   "trigger_word": "ohwx", "threshold": 0, "width": 64, "height": 64})
+    ds_project.set_reference(ds_project.load("grp"), png_bytes(), engine=None)
+    runner = ds_project.RUNNER
+    assert runner.start("grp", engines, {}, force=False, seed=1001)["ok"] and runner.wait(60)
+    c = ds_project.load("grp")["cards"][0]
+    meta = json.loads(Image.open(os.path.join(ds_project.project_dir("grp"), c["file"])).info["crispz"])
+    assert meta["prompt"] == "the same woman, same person, blue coat"     # seed 1001 % 2
+    assert c["prompt"] == "same person, {red|blue} coat"                  # the line stays the key
+    assert c["caption"] == "ohwx, same person, blue coat"
+    # no chunk (another engine's file): the raw line is kept
+    bare = os.path.join(ds_project.project_dir("grp"), "bare.png")
+    Image.new("RGB", (8, 8)).save(bare)
+    assert ds_project.resolved_text(bare, "a {b|c}", {}) == "a {b|c}"
+    assert ds_project.resolved_text(bare, "plain", {}) == "plain"
+
+
 def test_run_refuses_without_reference_and_when_busy(projects, engines):
     ds_project.create("empty", engine="fake")
     r = ds_project.RUNNER.start("empty", engines, {})

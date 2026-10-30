@@ -56,7 +56,7 @@ run.bat                 # http://127.0.0.1:8780
 python ds_server.py --port 8780 --no-browser
 ```
 
-Tests (CPU, a fake engine, no model): `python -m pytest tests -q` (26 tests).
+Tests (CPU, a fake engine, no model): `python -m pytest tests -q` (27 tests).
 
 ## Likeness scale
 
@@ -113,6 +113,11 @@ on the real engine (the raw cosine is kept per try in `project.json`).
   one closed question (ghosting, doubling, tiling) and a YES flags the try. A flagged
   try is re-rolled like a low score, the best unflagged try wins, and the card says
   when the kept try is still flagged. 26 tests.
+- Captions follow the engine's draw (same day): the engines expand the `{a|b|c}`
+  groups of a prompt line themselves, bound to the seed, and only the PNG's `crispz`
+  chunk carries the line they rendered. The first exported lot had two captions
+  still reading `{dark suit|elegant blouse}`; the caption is now built from that
+  chunk (subject prefix stripped), the raw line stays the card's key. 27 tests.
 - The 25 shots on the three engines, same photo-like reference (896x1344), same
   subject phrase, threshold 50, 2 re-rolls, Reference size (2026-10-30, RTX 5090):
 

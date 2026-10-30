@@ -13,6 +13,7 @@ Run standalone (the launcher test starts it as an "app.py"):
 
 import os
 import io
+import re
 import sys
 import json
 import time
@@ -21,7 +22,7 @@ import hashlib
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from PIL import Image
+from PIL import Image, PngImagePlugin
 
 TOOL = "fake-klein"
 VERSION = "0.0.1"
@@ -85,7 +86,12 @@ def edit(spec_json):
     with open(os.path.join(out_dir, "last_spec.json"), "w", encoding="utf-8") as f:
         json.dump(spec, f)          # what reached the engine, for the tests
     path = os.path.join(out_dir, f"czp_omni_{seed}_{STATE['edits']}.png")
-    img.save(path, "PNG")
+    # The real engines expand {a|b|c} themselves (seed-bound) and write the line they
+    # rendered in the PNG's "crispz" chunk; the fake picks the option at seed % n.
+    used = re.sub(r"\{([^{}]*)\}", lambda m: m.group(1).split("|")[seed % len(m.group(1).split("|"))], prompt)
+    info = PngImagePlugin.PngInfo()
+    info.add_text("crispz", json.dumps({"mode": "omni", "prompt": used, "seed": seed}))
+    img.save(path, "PNG", pnginfo=info)
     return {"ok": True, "protocol": 1, "tool": TOOL, "version": VERSION, "route": "remote",
             "images": [os.path.abspath(path)], "seed_used": seed, "loras": [], "refs_used": 1,
             "faces_refined": 0, "hands_refined": 0, "timings": {"total_s": 0.01},
