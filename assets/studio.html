@@ -89,6 +89,7 @@ small{color:var(--mut)}
     <div class="row" id="sizeCustom"><label></label><input type="number" id="w" step="32" min="64" max="4096"> x <input type="number" id="h" step="32" min="64" max="4096"></div>
     <div class="row"><label>Model</label><select id="modelSel" style="flex:1"></select></div>
     <div class="row" id="modelCustom" style="display:none"><label></label><input type="text" id="model" placeholder="repo id or checkpoint file, as the engine names it" style="flex:1"></div>
+    <div class="row"><label>Speed</label><select id="fast" style="flex:1"><option value="">engine setting</option><option value="lightning-8">Lightning 8 steps (edit LoRA, no CFG)</option><option value="lightning-4">Lightning 4 steps</option><option value="auto">Auto (model profile)</option><option value="off">Off (full steps + CFG)</option></select></div>
     <div class="row"><label>Steps</label><input type="number" id="steps" placeholder="engine"><label style="min-width:0">Guidance</label><input type="number" id="guidance" step="0.1" placeholder="engine"></div>
     <div class="row"><label>Likeness min</label><input type="number" id="threshold" min="0" max="100"><label style="min-width:0">Re-rolls</label><input type="number" id="rerolls" min="0" max="10"></div>
     <div class="row"><label>Detail faces</label><select id="detail"><option value="">engine setting</option><option value="1">on</option><option value="0">off</option></select></div>
@@ -139,9 +140,11 @@ const SIZES=[['1:1','1024x1024'],['1:1','1536x1536'],['1:1','2048x2048'],['4:5',
  ['9:16','768x1344'],['16:9','1344x768'],['2:3','832x1248'],['3:2','1248x832'],['9:16 2K','1152x2048'],['16:9 2K','2048x1152'],['21:9','1536x640'],['9:21','640x1536']];
 (function(){const sel=$('sizeSel');SIZES.forEach(([r,wh])=>{const o=document.createElement('option');o.value=wh;o.textContent=`${wh}  (${r})`;sel.appendChild(o);});
   const o=document.createElement('option');o.value='custom';o.textContent='Custom...';sel.appendChild(o);
-  sel.onchange=()=>{if(sel.value==='custom'){$('sizeCustom').style.display='';$('w').focus();}else{const [w,h]=sel.value.split('x');$('w').value=w;$('h').value=h;$('sizeCustom').style.display='none';}};})();
-function showSize(w,h){const sel=$('sizeSel');const v=`${w}x${h}`;$('w').value=w;$('h').value=h;
-  if(SIZES.some(x=>x[1]===v)){sel.value=v;$('sizeCustom').style.display='none';}else{sel.value='custom';$('sizeCustom').style.display='';}}
+  const r=document.createElement('option');r.value='reference';r.textContent='Reference size (the engine keeps the input\'s)';sel.appendChild(r);
+  sel.onchange=()=>{if(sel.value==='custom'){$('sizeCustom').style.display='';$('w').focus();}else if(sel.value==='reference'){$('sizeCustom').style.display='none';}else{const [w,h]=sel.value.split('x');$('w').value=w;$('h').value=h;$('sizeCustom').style.display='none';}};})();
+function showSize(w,h,mode){const sel=$('sizeSel');const v=`${w}x${h}`;$('w').value=w;$('h').value=h;
+  if(mode==='reference'){sel.value='reference';$('sizeCustom').style.display='none';}
+  else if(SIZES.some(x=>x[1]===v)){sel.value=v;$('sizeCustom').style.display='none';}else{sel.value='custom';$('sizeCustom').style.display='';}}
 
 // ---------- model menu ----------
 // Fed by the engine: its loaded model, the base repos it can switch to (KNOWN_BASES on
@@ -177,13 +180,13 @@ function fillRef(){$('ref').style.display=P.reference?'block':'none';if(P.refere
   $('refInfo').firstElementChild.textContent=P.reference?(P.ref_embedding?`face embedding ready (${P.ref_faces} face(s) on the photo)`:'face not analysed yet (engine was off); done at run start'):'';}
 function fill(){const s=P.settings;fillRef();
   $('engSel').value=P.engine||''; $('psSel').value=s.promptset||'';
-  $('prompts').value=(s.prompts||[]).join('\n'); showSize(s.width,s.height);
-  showModel(s.model||'');$('subject').value=s.subject||'';$('steps').value=s.steps??'';$('guidance').value=s.guidance??'';$('threshold').value=s.threshold;$('rerolls').value=s.max_rerolls;
+  $('prompts').value=(s.prompts||[]).join('\n'); showSize(s.width,s.height,s.size_mode);
+  showModel(s.model||'');$('subject').value=s.subject||'';$('fast').value=s.fast||'';$('steps').value=s.steps??'';$('guidance').value=s.guidance??'';$('threshold').value=s.threshold;$('rerolls').value=s.max_rerolls;
   $('detail').value=s.detail_faces===null||s.detail_faces===undefined?'':(s.detail_faces?'1':'0');
   $('capsrc').value=s.caption_source;$('trigger').value=s.trigger_word||'';$('expsize').value=String(s.export_size);$('expfmt').value=s.export_format;}
 $('psSel').onchange=async()=>{if(!P)return;const r=await api('project_settings',{name:P.name,settings:{promptset:$('psSel').value}});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();};
 async function saveSettings(){if(!P)return;const d=$('detail').value;
-  const settings={prompts:$('prompts').value,model:$('model').value,subject:$('subject').value,width:+$('w').value,height:+$('h').value,steps:$('steps').value||null,guidance:$('guidance').value||null,
+  const settings={prompts:$('prompts').value,model:$('model').value,subject:$('subject').value,width:+$('w').value,height:+$('h').value,size_mode:$('sizeSel').value==='reference'?'reference':'fixed',fast:$('fast').value,steps:$('steps').value||null,guidance:$('guidance').value||null,
     threshold:+$('threshold').value,max_rerolls:+$('rerolls').value,detail_faces:d===''?null:d==='1',caption_source:$('capsrc').value,
     trigger_word:$('trigger').value,export_size:+$('expsize').value,export_format:$('expfmt').value};
   const r=await api('project_settings',{name:P.name,settings,engine:$('engSel').value});

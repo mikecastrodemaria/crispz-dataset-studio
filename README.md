@@ -16,7 +16,10 @@
    engine's face service (insightface, the same as its Face Swap) gives the ArcFace
    embedding of the result, and the likeness against the reference is scored 0-100.
    Below the threshold the card is re-rolled with a new seed (up to N times); the best
-   try is kept and the card says when it stayed below.
+   try is kept and the card says when it stayed below. Size: a fixed width x height,
+   or "Reference size" (no size sent, the engine keeps the input's own). Speed: the
+   engine's setting, or `fast` of the edit op (Lightning 8 / 4 steps with the edit
+   LoRA, auto, off); Steps and Guidance empty = the engine's defaults.
 4. Captions: the prompt line (trigger word first), a local Ollama vision model, or both.
 5. Review the grid: reject, restore, re-roll a card, pick another try, edit a caption.
 6. Export the `001.png` + `001.txt` pairs (kohya, ai-toolkit, OneTrainer), long side
@@ -53,7 +56,7 @@ run.bat                 # http://127.0.0.1:8780
 python ds_server.py --port 8780 --no-browser
 ```
 
-Tests (CPU, a fake engine, no model): `python -m pytest tests -q` (21 tests).
+Tests (CPU, a fake engine, no model): `python -m pytest tests -q` (24 tests).
 
 ## Likeness scale
 
@@ -93,6 +96,17 @@ on the real engine (the raw cosine is kept per try in `project.json`).
   character with a hair bun and small earrings": 7 of 8 now pass 50 (46 to 65, the
   bathroom close-up went from a plain human at 26 to the character at 50), mean of
   the 22 scored cards 60, the 3 unscored lines rendered once. Then crispz-qwen-edit.
+- crispz-qwen-edit (2026-10-30, same 3 cards, seed 1000, Qwen-Image-Edit-2511 Q6
+  GGUF): the first pass came back ghosted and tiled although ArcFace said 54 to 60.
+  Two causes, both on the Dataset Studio side: it sent 1024x1024 for a 896x1344
+  reference (the edit was recomposed into a square) and no speed mode, so the engine
+  ran its 8-step default without the Lightning LoRA. With "Reference size" and
+  Speed = Lightning 8 steps (spec.fast, the 2511 Lightning LoRA stacked by the
+  engine): clean edits at 832x1248 in 33 to 42 s, likeness 63 / 52 / 57. The control
+  lot at 40 steps / CFG 4 without the LoRA scored 79 / 76 / 28 but barely edited
+  (two cards are the reference re-rendered) at 115 to 147 s: a high score is not an
+  edit. So on qwen-edit: Reference size + Lightning 8; and a visual check next to
+  the likeness is still worth adding.
 - Family fix shipped with it: `cli_faces` imported a function that did not exist in
   klein and flux3 (`detect_faces_full`), so no client could get embeddings.
 - Later: a `dataset` op in the family protocol so the same run can be driven without

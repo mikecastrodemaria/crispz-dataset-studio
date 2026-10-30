@@ -223,6 +223,30 @@ def test_full_run_rerolls_and_resume(projects, engines):
     assert [t["seed"] for t in p["cards"][1]["tries"]] == [1000, 1001, 1002]
 
 
+def test_reference_size_and_fast_mode_reach_the_engine(projects, engines):
+    """size_mode 'reference' sends no width/height (the engine keeps the input's own
+    size); 'fast' goes out as spec.fast; both are absent from the spec otherwise."""
+    p = ds_project.create("sz", engine="fake")
+    ds_project.update_settings(p, {"prompts": ["same person, close-up"], "max_rerolls": 0,
+                                   "width": 96, "height": 64, "size_mode": "reference",
+                                   "fast": "Lightning-8"})
+    p, _ = ds_project.set_reference(ds_project.load("sz"), png_bytes(size=(40, 24)), engine=None)
+    assert p["settings"]["fast"] == "lightning-8"
+    runner = ds_project.RUNNER
+    assert runner.start("sz", engines, {}, force=False)["ok"] and runner.wait(60)
+    p = ds_project.load("sz")
+    d = ds_project.project_dir("sz")
+    spec = json.load(open(os.path.join(d, "cards", "last_spec.json")))
+    assert "width" not in spec and "height" not in spec and spec["fast"] == "lightning-8"
+    assert Image.open(os.path.join(d, p["cards"][0]["file"])).size == (40, 24)
+    # back to a fixed size, no speed mode: the spec carries the size and no 'fast'
+    ds_project.update_settings(p, {"size_mode": "fixed", "fast": "whatever"})
+    assert ds_project.load("sz")["settings"]["fast"] == ""
+    assert runner.start("sz", engines, {}, force=True)["ok"] and runner.wait(60)
+    spec = json.load(open(os.path.join(d, "cards", "last_spec.json")))
+    assert (spec["width"], spec["height"]) == (96, 64) and "fast" not in spec
+
+
 def test_run_refuses_without_reference_and_when_busy(projects, engines):
     ds_project.create("empty", engine="fake")
     r = ds_project.RUNNER.start("empty", engines, {})

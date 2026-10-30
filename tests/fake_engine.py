@@ -73,11 +73,15 @@ def edit(spec_json):
     # a small seed-bound jitter so two tries differ (and so a DRIFT re-roll stays bad)
     j = seed % 7
     color = tuple(max(0, min(255, c + j)) for c in color)
-    w, h = int(spec.get("width") or 64), int(spec.get("height") or 64)
+    # No size in the spec -> the input's own size, as the real engines do (qwen-edit
+    # edits in place, klein renders at the reference's size).
+    w, h = int(spec.get("width") or ref.size[0]), int(spec.get("height") or ref.size[1])
     w, h = max(8, min(w, 128)), max(8, min(h, 128))
     img = Image.new("RGB", (w, h), color)
     out_dir = spec.get("out_dir") or os.path.join(os.path.dirname(inp), "fake_out")
     os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "last_spec.json"), "w", encoding="utf-8") as f:
+        json.dump(spec, f)          # what reached the engine, for the tests
     path = os.path.join(out_dir, f"czp_omni_{seed}_{STATE['edits']}.png")
     img.save(path, "PNG")
     return {"ok": True, "protocol": 1, "tool": TOOL, "version": VERSION, "route": "remote",

@@ -86,6 +86,16 @@ DEFAULT_SETTINGS = {
     "steps": None, "threshold": 35, "max_rerolls": 2, "caption_source": "prompt",
     "trigger_word": "", "detail_faces": None, "export_size": 1024,
     "export_format": "png", "guidance": None,
+    # "fixed" sends width x height; "reference" sends no size at all, so the engine
+    # keeps the input's own dimensions (qwen-edit edits in place; klein renders at the
+    # reference's size). Added on 2026-10-30: a 896x1344 portrait reference forced into
+    # 1024x1024 on qwen-edit came back recomposed and doubled.
+    "size_mode": "fixed",
+    # spec.fast of the edit op (protocol v1, klein and qwen-edit): "" = the engine's
+    # own setting, "off", "auto" (the model's profile), "lightning-4", "lightning-8"
+    # (the Lightning LoRA stacked on the edit model). Without it qwen-edit ran its
+    # 8-step default WITHOUT the Lightning LoRA (2026-10-30: ghosted, tiled faces).
+    "fast": "",
     # The engine's checkpoint for this project (spec.model, the protocol's per-call
     # switch: klein calls set_zimage_model). Empty = the engine's own setting. Added
     # on 2026-10-29 so a dataset can run on klein-4B while the user's app stays on 9B.
@@ -279,6 +289,11 @@ def update_settings(p, new):
     s["steps"] = int(s["steps"]) if s.get("steps") not in (None, "", 0, "0") else None
     s["guidance"] = float(s["guidance"]) if s.get("guidance") not in (None, "") else None
     s["model"] = str(s.get("model") or "").strip()
+    if s.get("size_mode") not in ("fixed", "reference"):
+        s["size_mode"] = "fixed"
+    s["fast"] = str(s.get("fast") or "").strip().lower()
+    if s["fast"] not in ("", "off", "auto", "lightning-4", "lightning-8"):
+        s["fast"] = ""
     s["subject"] = " ".join(str(s.get("subject") or "").split())
     if s.get("caption_source") not in ("prompt", "ollama", "both"):
         s["caption_source"] = "prompt"
@@ -498,9 +513,12 @@ class Runner:
             if self.cancel_flag and t > 1:
                 break
             seed = (base_seed + t - 1) if base_seed is not None else random.randint(0, 2 ** 31 - 1)
-            spec = {"prompt": prompt, "input": ref, "refs": [ref],
-                    "width": int(s["width"]), "height": int(s["height"]), "seed": seed,
+            spec = {"prompt": prompt, "input": ref, "refs": [ref], "seed": seed,
                     "out_dir": os.path.join(d, "cards")}
+            if s.get("size_mode") != "reference":
+                spec["width"], spec["height"] = int(s["width"]), int(s["height"])
+            if s.get("fast"):
+                spec["fast"] = s["fast"]
             if (s.get("model") or "").strip():
                 spec["model"] = s["model"].strip()
             if s.get("steps"):
