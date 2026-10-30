@@ -89,8 +89,9 @@ def ollama_vision_models(url=DEFAULT_URL, timeout=4, show=None):
     return vision
 
 
-def describe(image_path, cfg, timeout=180):
-    """Ollama vision description of one image. cfg = {"url", "model", "keep_alive"}."""
+def describe(image_path, cfg, timeout=180, prompt=None):
+    """Ollama vision description of one image. cfg = {"url", "model", "keep_alive"}.
+    prompt: another question for the same model (ds_quality's artifact check)."""
     url = (cfg or {}).get("url") or DEFAULT_URL
     model = (cfg or {}).get("model") or ""
     if not model:
@@ -103,7 +104,7 @@ def describe(image_path, cfg, timeout=180):
             b64 = base64.b64encode(f.read()).decode("ascii")
     except OSError as e:
         return {"ok": False, "error": f"cannot read {image_path}: {e}"}
-    payload = {"model": model, "prompt": DESCRIBE, "images": [b64], "stream": False,
+    payload = {"model": model, "prompt": prompt or DESCRIBE, "images": [b64], "stream": False,
                "think": False, "keep_alive": (cfg or {}).get("keep_alive", 0)}
     try:
         j = _ollama(url, payload, timeout)

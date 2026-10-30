@@ -56,7 +56,7 @@ run.bat                 # http://127.0.0.1:8780
 python ds_server.py --port 8780 --no-browser
 ```
 
-Tests (CPU, a fake engine, no model): `python -m pytest tests -q` (24 tests).
+Tests (CPU, a fake engine, no model): `python -m pytest tests -q` (26 tests).
 
 ## Likeness scale
 
@@ -105,8 +105,14 @@ on the real engine (the raw cosine is kept per try in `project.json`).
   engine): clean edits at 832x1248 in 33 to 42 s, likeness 63 / 52 / 57. The control
   lot at 40 steps / CFG 4 without the LoRA scored 79 / 76 / 28 but barely edited
   (two cards are the reference re-rendered) at 115 to 147 s: a high score is not an
-  edit. So on qwen-edit: Reference size + Lightning 8; and a visual check next to
-  the likeness is still worth adding.
+  edit. So on qwen-edit: Reference size + Lightning 8.
+- Visual checks beside the likeness (same day, `ds_quality.py`): a try whose 32x32
+  grayscale correlation with the reference is 0.9 or more is flagged as "the
+  reference copied back" (real edits measured 0.69 at most, the copies 0.95 and
+  0.98), and, when "artifacts (Ollama vision)" is ticked, the caption model answers
+  one closed question (ghosting, doubling, tiling) and a YES flags the try. A flagged
+  try is re-rolled like a low score, the best unflagged try wins, and the card says
+  when the kept try is still flagged. 26 tests.
 - Family fix shipped with it: `cli_faces` imported a function that did not exist in
   klein and flux3 (`detect_faces_full`), so no client could get embeddings.
 - Later: a `dataset` op in the family protocol so the same run can be driven without

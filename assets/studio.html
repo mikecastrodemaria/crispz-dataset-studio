@@ -92,6 +92,7 @@ small{color:var(--mut)}
     <div class="row"><label>Speed</label><select id="fast" style="flex:1"><option value="">engine setting</option><option value="lightning-8">Lightning 8 steps (edit LoRA, no CFG)</option><option value="lightning-4">Lightning 4 steps</option><option value="auto">Auto (model profile)</option><option value="off">Off (full steps + CFG)</option></select></div>
     <div class="row"><label>Steps</label><input type="number" id="steps" placeholder="engine"><label style="min-width:0">Guidance</label><input type="number" id="guidance" step="0.1" placeholder="engine"></div>
     <div class="row"><label>Likeness min</label><input type="number" id="threshold" min="0" max="100"><label style="min-width:0">Re-rolls</label><input type="number" id="rerolls" min="0" max="10"></div>
+    <div class="row"><label>Visual checks</label><label style="min-width:0"><input type="checkbox" id="copyChk"> copy of the reference</label><label style="min-width:0"><input type="checkbox" id="artChk"> artifacts (Ollama vision)</label></div>
     <div class="row"><label>Detail faces</label><select id="detail"><option value="">engine setting</option><option value="1">on</option><option value="0">off</option></select></div>
   </div>
   <div class="box"><h2>Captions</h2>
@@ -181,12 +182,12 @@ function fillRef(){$('ref').style.display=P.reference?'block':'none';if(P.refere
 function fill(){const s=P.settings;fillRef();
   $('engSel').value=P.engine||''; $('psSel').value=s.promptset||'';
   $('prompts').value=(s.prompts||[]).join('\n'); showSize(s.width,s.height,s.size_mode);
-  showModel(s.model||'');$('subject').value=s.subject||'';$('fast').value=s.fast||'';$('steps').value=s.steps??'';$('guidance').value=s.guidance??'';$('threshold').value=s.threshold;$('rerolls').value=s.max_rerolls;
+  showModel(s.model||'');$('subject').value=s.subject||'';$('fast').value=s.fast||'';$('copyChk').checked=s.copy_check!==false;$('artChk').checked=!!s.artifact_check;$('steps').value=s.steps??'';$('guidance').value=s.guidance??'';$('threshold').value=s.threshold;$('rerolls').value=s.max_rerolls;
   $('detail').value=s.detail_faces===null||s.detail_faces===undefined?'':(s.detail_faces?'1':'0');
   $('capsrc').value=s.caption_source;$('trigger').value=s.trigger_word||'';$('expsize').value=String(s.export_size);$('expfmt').value=s.export_format;}
 $('psSel').onchange=async()=>{if(!P)return;const r=await api('project_settings',{name:P.name,settings:{promptset:$('psSel').value}});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();};
 async function saveSettings(){if(!P)return;const d=$('detail').value;
-  const settings={prompts:$('prompts').value,model:$('model').value,subject:$('subject').value,width:+$('w').value,height:+$('h').value,size_mode:$('sizeSel').value==='reference'?'reference':'fixed',fast:$('fast').value,steps:$('steps').value||null,guidance:$('guidance').value||null,
+  const settings={prompts:$('prompts').value,model:$('model').value,subject:$('subject').value,width:+$('w').value,height:+$('h').value,size_mode:$('sizeSel').value==='reference'?'reference':'fixed',fast:$('fast').value,copy_check:$('copyChk').checked,artifact_check:$('artChk').checked,steps:$('steps').value||null,guidance:$('guidance').value||null,
     threshold:+$('threshold').value,max_rerolls:+$('rerolls').value,detail_faces:d===''?null:d==='1',caption_source:$('capsrc').value,
     trigger_word:$('trigger').value,export_size:+$('expsize').value,export_format:$('expfmt').value};
   const r=await api('project_settings',{name:P.name,settings,engine:$('engSel').value});

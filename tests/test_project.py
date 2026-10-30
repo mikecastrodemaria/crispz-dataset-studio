@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 
 import ds_engines
+import ds_quality
 import ds_project
 import ds_likeness
 import ds_captions
@@ -245,6 +246,62 @@ def test_reference_size_and_fast_mode_reach_the_engine(projects, engines):
     assert runner.start("sz", engines, {}, force=True)["ok"] and runner.wait(60)
     spec = json.load(open(os.path.join(d, "cards", "last_spec.json")))
     assert (spec["width"], spec["height"]) == (96, 64) and "fast" not in spec
+
+
+def textured_png(size=(64, 64)):
+    """A reference with structure (a flat colour has no variance to correlate)."""
+    im = Image.new("RGB", size)
+    im.putdata([((x * 7) % 256, (y * 5) % 256, ((x + y) * 3) % 256)
+                for y in range(size[1]) for x in range(size[0])])
+    b = io.BytesIO()
+    im.save(b, "PNG")
+    return b.getvalue()
+
+
+def test_copy_check_flags_the_reference_handed_back(projects, engines, tmp_path):
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(textured_png())
+    same = tmp_path / "same.png"
+    Image.open(ref).resize((48, 48)).save(same)
+    flat = tmp_path / "flat.png"
+    Image.new("RGB", (48, 48), (10, 20, 30)).save(flat)
+    assert ds_quality.copy_similarity(str(ref), str(same)) > 0.95
+    assert ds_quality.copy_similarity(str(ref), str(flat)) == 0.0
+    flags, detail = ds_quality.check(str(ref), str(same), {"copy_check": True}, {})
+    assert flags and "copied back" in flags[0] and detail["copy_sim"] > 0.95
+    assert ds_quality.check(str(ref), str(same), {"copy_check": False}, {}) == ([], {})
+    # through a run: the fake engine hands the input back on COPY -> every try is
+    # flagged, all re-rolls are spent, the card keeps the warning
+    p = ds_project.create("cp", engine="fake")
+    ds_project.update_settings(p, {"prompts": ["same person, COPY close-up"], "max_rerolls": 1,
+                                   "threshold": 0, "width": 64, "height": 64})
+    ds_project.set_reference(ds_project.load("cp"), textured_png(), engine=None)
+    runner = ds_project.RUNNER
+    assert runner.start("cp", engines, {}, force=False)["ok"] and runner.wait(60)
+    c = ds_project.load("cp")["cards"][0]
+    assert c["status"] == "done" and len(c["tries"]) == 2
+    assert all(t["flags"] for t in c["tries"]) and c["tries"][0]["detail"]["copy_sim"] > 0.9
+    assert any(w.startswith("kept try is flagged") for w in c["warnings"])
+
+
+def test_artifact_check_asks_ollama_and_prefers_a_clean_try(projects, engines, monkeypatch):
+    answers = iter(["YES, the face is doubled", "No, clean"])
+    asked = []
+    monkeypatch.setattr(ds_captions, "describe",
+                        lambda path, cfg, timeout=180, prompt=None:
+                        (asked.append(prompt), {"ok": True, "caption": next(answers), "model": "llava"})[1])
+    p = ds_project.create("art", engine="fake")
+    ds_project.update_settings(p, {"prompts": ["same person, close-up"], "max_rerolls": 2,
+                                   "threshold": 0, "width": 64, "height": 64, "artifact_check": True})
+    ds_project.set_reference(ds_project.load("art"), png_bytes(), engine=None)
+    runner = ds_project.RUNNER
+    assert runner.start("art", engines, {}, force=False)["ok"] and runner.wait(60)
+    c = ds_project.load("art")["cards"][0]
+    assert asked and asked[0] == ds_quality.ARTIFACT_PROMPT
+    # try 1 flagged -> a second try; try 2 clean -> kept, no re-roll, no warning
+    assert len(c["tries"]) == 2 and c["tries"][0]["flags"] and not c["tries"][1]["flags"]
+    assert c["file"] == c["tries"][1]["file"] and not c["warnings"]
+    assert c["tries"][0]["detail"]["artifact"].startswith("YES")
 
 
 def test_run_refuses_without_reference_and_when_busy(projects, engines):

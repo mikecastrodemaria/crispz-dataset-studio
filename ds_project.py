@@ -41,6 +41,7 @@ import threading
 
 import ds_likeness
 import ds_captions
+import ds_quality
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECTS_DIR = os.path.join(HERE, "projects")
@@ -96,6 +97,10 @@ DEFAULT_SETTINGS = {
     # (the Lightning LoRA stacked on the edit model). Without it qwen-edit ran its
     # 8-step default WITHOUT the Lightning LoRA (2026-10-30: ghosted, tiled faces).
     "fast": "",
+    # Visual checks beside the likeness (ds_quality, 2026-10-30): a try that is the
+    # reference copied back (correlation >= 0.9) or, with Ollama, one with ghosting
+    # or doubling is flagged and re-rolled like a low score.
+    "copy_check": True, "artifact_check": False,
     # The engine's checkpoint for this project (spec.model, the protocol's per-call
     # switch: klein calls set_zimage_model). Empty = the engine's own setting. Added
     # on 2026-10-29 so a dataset can run on klein-4B while the user's app stays on 9B.
@@ -294,6 +299,8 @@ def update_settings(p, new):
     s["fast"] = str(s.get("fast") or "").strip().lower()
     if s["fast"] not in ("", "off", "auto", "lightning-4", "lightning-8"):
         s["fast"] = ""
+    s["copy_check"] = bool(s.get("copy_check", True))
+    s["artifact_check"] = bool(s.get("artifact_check"))
     s["subject"] = " ".join(str(s.get("subject") or "").split())
     if s.get("caption_source") not in ("prompt", "ollama", "both"):
         s["caption_source"] = "prompt"
@@ -563,16 +570,19 @@ class Runner:
                 score, detail = ds_likeness.score(p.get("ref_embedding"), fr.get("faces"))
             else:
                 score, detail = 0, {"reason": f"faces: {fr.get('error')}"}
+            flags, qdetail = ds_quality.check(ref, dst, s, ollama_cfg)
+            detail = dict(detail, **qdetail)
             tr = {"file": f"cards/{dst_name}", "seed": r.get("seed_used", seed),
                   "score": score, "detail": detail, "prompt": prompt, "model": model,
-                  "time_s": round(time.time() - t0, 1)}
+                  "flags": flags, "time_s": round(time.time() - t0, 1)}
             card["tries"].append(tr)
             self._say(f"card {idx:03d} try {t}: likeness {score} "
                       f"({detail.get('reason') or 'cos ' + str(detail.get('cosine'))}), "
-                      f"{tr['time_s']} s")
-            if best is None or score > best["score"]:
+                      f"{tr['time_s']} s" + (f"; FLAGGED: {'; '.join(flags)}" if flags else ""))
+            # the best try: an unflagged one first, then the score
+            if best is None or (not flags, score) > (not best.get("flags"), best["score"]):
                 best = tr
-            if not scored or score >= int(s.get("threshold") or 0):
+            if not scored or (score >= int(s.get("threshold") or 0) and not flags):
                 break
         if best is None:
             card["status"] = "failed"
@@ -580,6 +590,8 @@ class Runner:
             return
         card.update({"status": "done", "file": best["file"], "seed": best["seed"],
                      "score": best["score"], "detail": best["detail"]})
+        if best.get("flags"):
+            card["warnings"].append("kept try is flagged: " + "; ".join(best["flags"]))
         if not scored:
             card["detail"] = dict(best["detail"], unscored=why)
         elif best["score"] < int(s.get("threshold") or 0):

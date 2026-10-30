@@ -78,6 +78,8 @@ def edit(spec_json):
     w, h = int(spec.get("width") or ref.size[0]), int(spec.get("height") or ref.size[1])
     w, h = max(8, min(w, 128)), max(8, min(h, 128))
     img = Image.new("RGB", (w, h), color)
+    if "COPY" in prompt:
+        img = ref.resize((w, h))         # the input handed back: the copy check's case
     out_dir = spec.get("out_dir") or os.path.join(os.path.dirname(inp), "fake_out")
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "last_spec.json"), "w", encoding="utf-8") as f:
