@@ -65,7 +65,7 @@ different people below 30; a generated image of the same identity lands in betwe
 The default threshold 35 is a floor for clear drift, to calibrate after a first batch
 on the real engine (the raw cosine is kept per try in `project.json`).
 
-## Status (2026-10-29)
+## Status (2026-10-30)
 
 - Done on CPU: engine client and launcher, project state, run loop with re-rolls and
   resume, captions (prompt / Ollama / both), export, SPA, 23 tests.
@@ -113,6 +113,22 @@ on the real engine (the raw cosine is kept per try in `project.json`).
   one closed question (ghosting, doubling, tiling) and a YES flags the try. A flagged
   try is re-rolled like a low score, the best unflagged try wins, and the card says
   when the kept try is still flagged. 26 tests.
+- The 25 shots on the three engines, same photo-like reference (896x1344), same
+  subject phrase, threshold 50, 2 re-rolls, Reference size (2026-10-30, RTX 5090):
+
+  | engine | setting | mean (22 scored) | pass at 50 | first try | tries | per try |
+  |---|---|---|---|---|---|---|
+  | crispz-klein, FLUX.2-klein-4B | 1024x1024 | 60 | 19 / 22 | 10 | 54 | 5 s |
+  | crispz-qwen-edit, 2511 Q6 GGUF | Lightning 8 | 53 | 15 / 22 | 8 | 49 | 61 s |
+  | crispz-flux3, FLUX.3 Image Klein | 16 steps | 79 | 22 / 22 | 22 | 25 | 16 s |
+
+  flux3 keeps the face on every framing (94 on the frontal close-up, 87 to 92 on the
+  full-body shots, 57 on the weakest), no try looked like the reference (copy
+  similarity 0.39 at most), 25 cards in 7 minutes; its one drift is the hair, auburn
+  turning chestnut. qwen-edit renders beautiful scenes but loses the face on
+  profiles and small faces (27 to 36), and a full-body try takes 60 to 100 s.
+  klein-4B is the fastest and holds the middle. So the default engine for a
+  character dataset is flux3 when the card fits (19 GB), klein-4B otherwise.
 - Family fix shipped with it: `cli_faces` imported a function that did not exist in
   klein and flux3 (`detect_faces_full`), so no client could get embeddings.
 - Later: a `dataset` op in the family protocol so the same run can be driven without
