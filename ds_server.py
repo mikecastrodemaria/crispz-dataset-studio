@@ -36,6 +36,10 @@ Ops:
   aitk_create {name, preset?, steps?, lot?}  copy a lot into ai-toolkit's datasets
                                         and write config/<job>.yaml (lot = an
                                         export's lot path; none = a fresh export)
+  aitk_train {name, job?, stop_engine?} start ai-toolkit on the job (default: the
+                                        project's last one); the GPU must be free
+  aitk_train_stop {}                    stop the training (whole process tree)
+  status {} also carries 'training' (job, progress, log tail, result)
 """
 
 import os
@@ -158,7 +162,13 @@ class Studio:
     def op_engines(self, data):
         return {"engines": self.engines.statuses(), "default": self.engines.default}
 
+    def _training_guard(self, what):
+        if ds_aitoolkit.trainer().running():
+            raise RuntimeError(f"an ai-toolkit training ('{ds_aitoolkit.trainer().state['job']}') "
+                               f"is using the GPU: wait for it or stop it before {what}")
+
     def op_engine_launch(self, data):
+        self._training_guard("starting an engine")
         e = self.engines.get(data.get("name"))
         other = self.engines.alive_child()
         if other is not None and other is not e:
@@ -235,6 +245,7 @@ class Studio:
         return {"project": p, "warning": warn, "message": msg}
 
     def op_run(self, data):
+        self._training_guard("rendering")
         name = data.get("name")
         only = data.get("only")
         if only is not None:
@@ -248,7 +259,7 @@ class Studio:
         return {"cancelled": self.runner.cancel()}
 
     def op_status(self, data):
-        return {"status": self.runner.status()}
+        return {"status": self.runner.status(), "training": ds_aitoolkit.trainer().status()}
 
     def op_card_update(self, data):
         p = self._project(data)
@@ -301,6 +312,41 @@ class Studio:
         if exported:
             r["exported"] = exported["lot"]
         return r
+
+    def op_aitk_train(self, data):
+        p = self._project(data)
+        root = ds_aitoolkit.find_root(self.config.get("ai_toolkit_dir"))
+        if not root:
+            raise FileNotFoundError("set the AI-Toolkit folder in Settings first")
+        job = str(data.get("job") or (p.get("last_aitk") or {}).get("job") or "").strip()
+        if not job:
+            raise ValueError("no AI-Toolkit job for this project yet: create it first")
+        if self.runner.state["running"]:
+            raise RuntimeError("a dataset run is in progress: the GPU is busy")
+        # One GPU: the engine Dataset Studio started holds 15 to 30 GB. It is stopped
+        # only when the user said so (stop_engine), never silently.
+        busy = self.engines.alive_child()
+        if busy is not None:
+            if not data.get("stop_engine"):
+                return {"ok": False, "engine_busy": busy.name,
+                        "error": f"engine '{busy.name}' (started by Dataset Studio) holds the "
+                                 f"GPU: stop it to train"}
+            log(f"training: stopping engine '{busy.name}' first (GPU)")
+            busy.stop()
+        warnings = []
+        others = [e["name"] for e in self.engines.statuses()
+                  if e.get("running") and not e.get("started_by_us")]
+        if others:
+            warnings.append(f"engine(s) {', '.join(others)} running outside Dataset Studio "
+                            f"may hold GPU memory: close them if the training runs out of VRAM")
+            for w in warnings:
+                log(f"training: {w}")
+        st = ds_aitoolkit.trainer().start(root, job, project=p["name"])
+        return {"training": st, "warnings": warnings}
+
+    def op_aitk_train_stop(self, data):
+        return {"stopped": ds_aitoolkit.trainer().stop(),
+                "training": ds_aitoolkit.trainer().status()}
 
     def shutdown(self):
         self.engines.stop_all()

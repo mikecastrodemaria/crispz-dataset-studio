@@ -52,6 +52,8 @@ dialog::backdrop{background:#000a}dialog h3{margin:0 0 10px}
 #zoom img{display:block;width:auto;height:auto;max-width:calc(96vw - 16px);max-height:calc(96vh - 60px);object-fit:contain}
 small{color:var(--mut)}
 #doneBar{display:none;align-items:center;gap:8px;flex-wrap:wrap;border-color:var(--ok)}#doneBar b{color:var(--ok)}
+#trainBar{display:none;border-color:var(--acc)}#trainBar .tb{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:6px 0}#trainBar .tb i{display:block;height:100%;background:var(--acc);width:0;transition:width .5s}
+#trainBar pre{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--mut);max-height:160px;overflow:auto;white-space:pre-wrap;margin:6px 0 0}
 .cmd{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:11px}
 </style></head><body>
 <header>
@@ -111,7 +113,9 @@ small{color:var(--mut)}
 </aside>
 <section class="grid">
   <div class="box" id="doneBar"><b id="doneTxt">Dataset complete</b><span style="flex:1"></span>
-    <button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><small id="doneHint"></small></div>
+    <button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><small id="doneHint"></small></div>
+  <div class="box" id="trainBar"><div class="row" style="margin:0"><b id="trainTxt"></b><span style="flex:1"></span><button id="trainLog">Log</button><button id="trainStop" class="danger">Stop training</button><button id="trainHide">Hide</button></div>
+    <div class="tb"><i></i></div><small id="trainSub"></small><pre id="trainTail" style="display:none"></pre></div>
   <div class="cards" id="cards"></div></section>
 </main>
 
@@ -156,7 +160,8 @@ small{color:var(--mut)}
     <div class="row"><label>Config</label><small id="aitkCfg"></small></div>
     <div class="row"><label>Command</label><input type="text" id="aitkCmd" class="cmd" readonly style="flex:1"><button id="aitkCopy">Copy</button></div>
     <div id="aitkWarn"></div>
-    <small>Run the command in a terminal, or open ai-toolkit's UI: the dataset is in its list.</small>
+    <small>Launch it from here (the training runs on its own: closing Dataset Studio does not stop it), run the command in a terminal, or open ai-toolkit's UI where the dataset is listed.</small>
+    <div class="row" style="margin-top:8px"><button id="aitkTrain" class="primary">Launch training</button></div>
   </div>
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('aitkDlg').close()">Close</button><button id="aitkGo" class="primary">Create job</button></div>
   <small id="aitkMsg" class="err"></small>
@@ -165,7 +170,7 @@ small{color:var(--mut)}
 
 <script>
 const $=id=>document.getElementById(id);
-let P=null, CFG=null, ENGINES=[], POLL=null, lastRunning=false, AITK=null, JUST_LOT=null;
+let P=null, CFG=null, ENGINES=[], POLL=null, lastRunning=false, AITK=null, JUST_LOT=null, TRAIN={active:false}, TRAIN_HIDDEN=null;
 async function api(op,data){const r=await fetch('/api/'+op,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})});return r.json();}
 function say(t,cls){$('status').textContent=t||'';$('status').className=cls||'';}
 function logLines(lines){$('log').textContent=(lines||[]).join('\n');$('log').scrollTop=1e9;}
@@ -280,9 +285,11 @@ async function poll(){clearTimeout(POLL);const r=await api('status');const s=r.s
   $('cancelBtn').disabled=!s.running;$('runBtn').disabled=!!s.running;
   $('bar').firstElementChild.style.width=s.total?Math.round(100*s.done/s.total)+'%':'0';
   if(s.text)say((s.running?'':'')+s.text,s.ok===false?'err':'');logLines(s.log);
+  const wasTraining=!!TRAIN.running;TRAIN=r.training||{active:false};if(wasTraining&&!TRAIN.running){renderDoneBar();say(`training ${TRAIN.job}: ${TRAIN.result}`+(TRAIN.lora?`, LoRA in ${TRAIN.lora}`:''),TRAIN.result==='done'?'':'warn');}
   if(s.running||lastRunning){if(P&&s.project===P.name){const pr=await api('project_get',{name:P.name});if(pr.ok){P=pr.project;renderCards(s.current);fillRef();projectLabel();}}}
   const ended=!s.running&&lastRunning;lastRunning=!!s.running;
-  if(ended){refreshEngines();renderDoneBar();if(datasetComplete()&&s.project===P.name)say(AITK&&AITK.root?'dataset complete: export it, or create the AI-Toolkit job (green bar above the cards)':'dataset complete: export it (green bar above the cards)');}POLL=setTimeout(poll,s.running?1500:6000);}
+  if(ended){refreshEngines();renderDoneBar();if(datasetComplete()&&s.project===P.name)say(AITK&&AITK.root?'dataset complete: export it, or create the AI-Toolkit job (green bar above the cards)':'dataset complete: export it (green bar above the cards)');}
+  renderTrain();POLL=setTimeout(poll,s.running?1500:(TRAIN.running?3000:6000));}
 
 // ---------- cards ----------
 function badge(c){if(c.scored===false&&c.file)return `<span class="badge" title="unscored line: the face model cannot judge it">n/s ${c.score??''}</span>`;if(c.score===null||c.score===undefined)return '';const cls=c.score>=(P.settings.threshold||0)?'ok':(c.score>0?'low':'zero');return `<span class="badge ${cls}">${c.score}</span>`;}
@@ -294,6 +301,7 @@ function datasetComplete(){if(!P||!P.cards.length)return false;const done=P.card
 function renderDoneBar(){const ok=datasetComplete()&&!lastRunning;$('doneBar').style.display=ok?'flex':'none';if(!ok)return;
   const done=P.cards.filter(c=>c.status==='done').length;$('doneTxt').textContent=`Dataset complete: ${done} card(s) kept`;
   const ready=AITK&&AITK.root;$('doneAitk').style.display=ready?'':'none';
+  $('doneTrain').style.display=ready&&P.last_aitk&&!TRAIN.running?'':'none';$('doneTrain').title=P.last_aitk?'train job '+P.last_aitk.job:'';
   $('doneHint').textContent=ready?(P.last_aitk?`last job: ${P.last_aitk.job}`:''):(AITK&&AITK.error?AITK.error:'set the AI-Toolkit folder in Settings to create the training job from here');}
 async function refreshAitk(){const r=await api('aitk_status');AITK=r.ok?r.aitk:null;renderDoneBar();}
 function openAitk(){if(!P||!AITK||!AITK.root)return;const s=$('aitkPreset');s.innerHTML='';
@@ -302,7 +310,29 @@ function openAitk(){if(!P||!AITK||!AITK.root)return;const s=$('aitkPreset');s.in
   $('aitkSteps').value=AITK.default_steps;$('aitkDs').textContent=AITK.datasets_dir;
   $('aitkUseLot').checked=!!JUST_LOT;$('aitkUseLot').disabled=!JUST_LOT;$('aitkLot').textContent=JUST_LOT||'none in this session';
   $('aitkOut').style.display='none';$('aitkMsg').textContent='';$('aitkGo').disabled=false;$('aitkDlg').showModal();}
-$('doneAitk').onclick=openAitk;$('doneExport').onclick=()=>$('exportBtn').click();
+$('doneAitk').onclick=openAitk;
+// ---------- training ----------
+async function launchTrain(job){if(!P)return;say('starting the training...');
+  let r=await api('aitk_train',{name:P.name,job});
+  if(!r.ok&&r.engine_busy){if(!confirm(`The engine '${r.engine_busy}' started by Dataset Studio holds the GPU.\nStop it and start the training?`))return say('training not started','warn');
+    r=await api('aitk_train',{name:P.name,job,stop_engine:true});refreshEngines();}
+  if(!r.ok)return say(r.error,'err');TRAIN=r.training;TRAIN_HIDDEN=null;renderTrain();renderDoneBar();
+  say(`training ${r.training.job} started`+((r.warnings||[]).length?': '+r.warnings.join('; '):''),(r.warnings||[]).length?'warn':'');$('aitkDlg').close();poll();}
+$('doneTrain').onclick=()=>launchTrain(P&&P.last_aitk?P.last_aitk.job:undefined);
+$('aitkTrain').onclick=()=>launchTrain($('aitkJob').textContent);
+$('trainStop').onclick=async()=>{if(!confirm(`Stop the training ${TRAIN.job}? The saves already written (every 250 steps) stay in its output folder.`))return;
+  const r=await api('aitk_train_stop');if(r.ok){TRAIN=r.training;renderTrain();renderDoneBar();}else say(r.error,'err');};
+$('trainLog').onclick=()=>{const t=$('trainTail');t.style.display=t.style.display==='none'?'':'none';t.scrollTop=1e9;};
+$('trainHide').onclick=()=>{TRAIN_HIDDEN=TRAIN.job+':'+TRAIN.started;renderTrain();};
+function renderTrain(){const t=TRAIN||{};const show=t.active&&(t.running||TRAIN_HIDDEN!==t.job+':'+t.started);$('trainBar').style.display=show?'block':'none';
+  $('runBtn').disabled=!!t.running||lastRunning;if(!show)return;
+  const pg=t.progress||{};const pct=pg.total?Math.round(100*pg.step/pg.total):0;$('trainBar').querySelector('.tb i').style.width=(t.running?pct:(t.result==='done'?100:pct))+'%';
+  $('trainStop').style.display=t.running?'':'none';$('trainHide').style.display=t.running?'none':'';
+  $('trainTxt').textContent=t.running?`Training ${t.job}: `+(pg.total?`step ${pg.step}/${pg.total} (${pct}%)`:'loading the model and caching latents...'):
+    (t.result==='done'?`Training ${t.job} done`:t.result==='stopped'?`Training ${t.job} stopped`:`Training ${t.job} failed`+(t.returncode!=null?` (exit ${t.returncode})`:''));
+  const bits=[];if(pg.loss)bits.push('loss '+pg.loss);if(pg.elapsed)bits.push('elapsed '+pg.elapsed);if(t.running&&pg.eta)bits.push('left '+pg.eta);bits.push(t.minutes+' min total');
+  if(!t.running&&t.lora)bits.push('LoRA: '+t.lora);if(!t.running&&!t.lora)bits.push('log: '+t.log);if(t.running&&!t.hf_token)bits.push('no HF token found (a gated base fails)');
+  $('trainSub').textContent=bits.join(' · ');$('trainTail').textContent=(t.tail||[]).join('\n');}$('doneExport').onclick=()=>$('exportBtn').click();
 $('aitkGo').onclick=async()=>{$('aitkGo').disabled=true;$('aitkMsg').textContent='';say('creating the AI-Toolkit job...');
   const r=await api('aitk_create',{name:P.name,preset:$('aitkPreset').value,steps:+$('aitkSteps').value,lot:$('aitkUseLot').checked?JUST_LOT:undefined});
   $('aitkGo').disabled=false;if(!r.ok){$('aitkMsg').textContent=r.error;return say(r.error,'err');}

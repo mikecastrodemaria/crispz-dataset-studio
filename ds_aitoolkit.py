@@ -303,3 +303,232 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
     return {"job": job, "root": root, "dataset_dir": dst, "config_path": cfg_path,
             "command": command, "pairs": len(images), "preset": preset, "steps": steps,
             "warnings": warnings}
+
+
+# ----------------------------------------------------------------------------
+# Training: run.py config/<job>.yaml in ai-toolkit's own interpreter
+# ----------------------------------------------------------------------------
+# One training at a time (one GPU). The process is detached from Dataset Studio:
+# closing the studio does NOT stop a 50-minute training; its pid, log and job are
+# kept in logs/training.json so the next start picks the status up again. Stop kills
+# the whole process tree (the dataloader workers too).
+#
+# Progress: ai-toolkit prints a tqdm bar per step, "<job>:  17%|..| 250/1500 [03:20<..,
+# 1.25it/s, lr: 1.0e-04 loss: 6.500e-01]"; the last bar whose total equals the job's
+# steps is the training (the latent cache bars count images, not steps).
+import time
+import threading
+import subprocess
+
+import ds_engines
+
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+STATE_PATH = os.path.join(APP_DIR, "logs", "training.json")
+_BAR = re.compile(r"(\d+)/(\d+)\s*\[([0-9:]+)?(?:<([0-9:?]+))?")
+_LOSS = re.compile(r"loss:\s*([0-9.eE+-]+)")
+
+
+def _hf_token():
+    """HF_TOKEN for the gated 9B base: the environment, else the token file the
+    huggingface CLI writes. ai-toolkit reads HF_TOKEN, and an empty value in its own
+    settings was enough to lose the gated repo (report of 2026-10-31)."""
+    t = (os.environ.get("HF_TOKEN") or "").strip()
+    if t:
+        return t
+    home = os.environ.get("HF_HOME") or os.path.join(os.path.expanduser("~"), ".cache", "huggingface")
+    try:
+        with open(os.path.join(home, "token"), encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def _steps_of(config_path):
+    try:
+        with open(config_path, encoding="utf-8") as fh:
+            m = re.search(r"^\s*steps:\s*(\d+)", fh.read(), re.M)
+        return int(m.group(1)) if m else None
+    except OSError:
+        return None
+
+
+def parse_progress(text, total_steps=None):
+    """{step, total, elapsed, eta, loss} from the tail of the log, or {}."""
+    out = {}
+    for chunk in re.split(r"[\r\n]+", text or ""):
+        for m in _BAR.finditer(chunk):
+            step, total = int(m.group(1)), int(m.group(2))
+            if total_steps and total != total_steps:
+                continue
+            if not total_steps and total < 50:
+                continue
+            out = {"step": step, "total": total, "elapsed": m.group(3) or "",
+                   "eta": m.group(4) or ""}
+            lm = _LOSS.search(chunk)
+            if lm:
+                out["loss"] = lm.group(1)
+    return out
+
+
+def _tail(path, n=16000):
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - n))
+            return fh.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _last_lines(text, k=12):
+    lines = [l.rstrip() for l in re.split(r"[\r\n]+", text) if l.strip()]
+    return lines[-k:]
+
+
+def _kill_tree(pid):
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(int(pid)), "/T", "/F"],
+                       capture_output=True, timeout=30)
+    else:
+        import signal
+        try:
+            os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            ds_engines._kill_pid(pid)
+
+
+class Trainer:
+    def __init__(self, state_path=None):
+        self.state_path = state_path or STATE_PATH
+        self.proc = None
+        self.lock = threading.Lock()
+        self.state = self._load()
+
+    def _load(self):
+        try:
+            with open(self.state_path, encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return {}
+
+    def _save(self):
+        os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
+        tmp = self.state_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self.state, fh, ensure_ascii=False, indent=1)
+        os.replace(tmp, self.state_path)
+
+    def running(self):
+        s = self.state
+        if not s.get("pid") or s.get("finished"):
+            return False
+        if self.proc is not None:
+            alive = self.proc.poll() is None
+        else:
+            alive = ds_engines._pid_alive(s["pid"])     # started by an earlier session
+        if not alive:
+            self._finish()
+        return alive
+
+    def _finish(self):
+        s = self.state
+        if s.get("finished"):
+            return
+        rc = self.proc.poll() if self.proc is not None else None
+        s["finished"] = time.time()
+        s["returncode"] = rc
+        lora = os.path.join(s["root"], "output", s["job"], s["job"] + ".safetensors")
+        s["lora"] = lora if os.path.isfile(lora) else ""
+        if s.get("stopped"):
+            s["result"] = "stopped"
+        elif s["lora"] and rc in (0, None):
+            s["result"] = "done"
+        else:
+            s["result"] = "failed"
+        self._save()
+        _log(f"training '{s['job']}': {s['result']}"
+             + (f", LoRA {s['lora']}" if s["lora"] else "")
+             + (f", exit code {rc}" if rc not in (0, None) else "")
+             + f" (log {s['log']})")
+
+    def start(self, root, job, project=None):
+        with self.lock:
+            if self.running():
+                raise RuntimeError(f"training '{self.state['job']}' is already running")
+            cfg_path = os.path.join(root, "config", job + ".yaml")
+            if not os.path.isfile(cfg_path):
+                raise FileNotFoundError(f"no config for job '{job}': {cfg_path}")
+            os.makedirs(os.path.join(root, "output"), exist_ok=True)
+            log_path = os.path.join(root, "output", job + ".dataset-studio.log")
+            py = python_for(root)
+            env = dict(os.environ)
+            env["PYTHONUTF8"] = "1"
+            env["PYTHONUNBUFFERED"] = "1"
+            tok = _hf_token()
+            if tok:
+                env["HF_TOKEN"] = tok
+            argv = [py, "run.py", f"config/{job}.yaml"]
+            logf = open(log_path, "ab")
+            logf.write(f"\n=== launched by crispz-dataset-studio {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                       f" :: {' '.join(argv)}\n".encode())
+            logf.flush()
+            kw = {}
+            if os.name == "nt":
+                kw["creationflags"] = (getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                                       | getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            else:
+                kw["start_new_session"] = True
+            try:
+                self.proc = subprocess.Popen(argv, cwd=root, env=env, stdout=logf,
+                                             stderr=subprocess.STDOUT,
+                                             stdin=subprocess.DEVNULL, **kw)
+            except OSError as e:
+                raise RuntimeError(f"cannot start ai-toolkit with {py}: {e}")
+            finally:
+                logf.close()
+            self.state = {"job": job, "root": root, "project": project, "pid": self.proc.pid,
+                          "log": log_path, "config": cfg_path, "steps": _steps_of(cfg_path),
+                          "started": time.time(), "finished": None, "result": "running",
+                          "hf_token": bool(tok)}
+            self._save()
+            _log(f"training '{job}' started (pid {self.proc.pid}, {py}), log {log_path}"
+                 + ("" if tok else "; no Hugging Face token found: a gated base will fail"))
+            return self.status()
+
+    def stop(self):
+        with self.lock:
+            if not self.running():
+                return False
+            self.state["stopped"] = True
+            _log(f"training '{self.state['job']}': stop requested (pid {self.state['pid']})")
+            _kill_tree(self.state["pid"])
+            if self.proc is not None:
+                try:
+                    self.proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    pass
+            self._finish()
+            return True
+
+    def status(self):
+        s = dict(self.state)
+        if not s.get("job"):
+            return {"active": False}
+        run = self.running()
+        s = dict(self.state)
+        text = _tail(s.get("log") or "")
+        s.update(running=run, active=True, progress=parse_progress(text, s.get("steps")),
+                 tail=_last_lines(text))
+        s["minutes"] = round(((s.get("finished") or time.time()) - s["started"]) / 60.0, 1)
+        return s
+
+
+TRAINER = None
+
+
+def trainer():
+    global TRAINER
+    if TRAINER is None:
+        TRAINER = Trainer()
+    return TRAINER

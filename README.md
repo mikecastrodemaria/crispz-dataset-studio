@@ -36,6 +36,17 @@
    `docs/lora-klein-2026-10-31.md` (rank 16, 1500 steps by default). Nothing starts on
    its own: the dialog gives the command line, or the dataset is in ai-toolkit's UI.
    A new job never overwrites an earlier one (`_v2`, `_v3`).
+8. "Launch training" (in the job dialog, or the green bar once a job exists) runs
+   `run.py config/<job>.yaml` with ai-toolkit's own `.venv` interpreter,
+   `PYTHONUTF8=1` and `HF_TOKEN` (from the environment or the Hugging Face token
+   file, needed by the gated Klein 9B base). A blue panel follows it: step, loss,
+   elapsed and remaining time, the log tail, Stop (the whole process tree; the saves
+   written every 250 steps stay). One GPU: no render and no engine start during a
+   training, and the engine Dataset Studio started is stopped first only after a
+   confirmation. The training is detached: closing Dataset Studio does not stop it,
+   and the next start picks its status up again (`logs/training.json`). The log is
+   `<ai-toolkit>/output/<job>.dataset-studio.log`, the LoRA
+   `<ai-toolkit>/output/<job>/<job>.safetensors`.
 
 "Clone" (header) copies the open project under a new name, with its renders and
 tries, or with the reference, settings and prompts only (every card pending): to try

@@ -149,3 +149,114 @@ def test_clone_and_aitk_over_http(studio, tmp_path):  # noqa: F811
     r = post(studio, "aitk_create", {"name": "src", "lot": ex["lot"]})
     assert r["ok"] and "exported" not in r and r["job"] == "src_klein4b_v2"
     assert post(studio, "project_get", {"name": "src"})["project"]["last_aitk"]["job"] == r["job"]
+
+
+# ------------------------------------------------------------------ training
+FAKE_RUN = r'''
+import os, sys, time
+cfg = sys.argv[1]
+job = os.path.splitext(os.path.basename(cfg))[0]
+mode = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mode.txt")).read().strip()
+print("Caching latents:", "100%|##########| 3/3 [00:01<00:00]", flush=True)
+for i in (0, 50, 100):
+    sys.stdout.write(f"\r{job}:  {i}%|###| {i * 15}/1500 [00:0{i // 50}<00:02,  1.2it/s, lr: 1.0e-04 loss: 6.5{i}e-01]")
+    sys.stdout.flush()
+    time.sleep(0.05 if mode != "slow" else 0.5)
+if mode == "slow":
+    time.sleep(60)
+if mode == "fail":
+    print("\nRuntimeError: CUDA out of memory", flush=True)
+    sys.exit(3)
+out = os.path.join("output", job)
+os.makedirs(out, exist_ok=True)
+open(os.path.join(out, job + ".safetensors"), "wb").write(b"lora")
+print("\nDone", flush=True)
+'''
+
+
+def fake_aitk_trainable(base, mode="ok"):
+    import sys
+    root = fake_aitk(base)
+    (root / "run.py").write_text(FAKE_RUN)
+    (root / "mode.txt").write_text(mode)
+    vbin = root / ".venv" / "bin"
+    vbin.mkdir(parents=True)
+    os.symlink(sys.executable, vbin / "python")
+    (root / "config").mkdir()
+    (root / "config" / "job_v1.yaml").write_text("config:\n  process:\n    - train:\n        steps: 1500\n")
+    return root
+
+
+def wait_done(tr, secs=20):
+    for _ in range(int(secs * 10)):
+        if not tr.running():
+            return tr.status()
+        time.sleep(0.1)
+    raise AssertionError("training did not end")
+
+
+def test_parse_progress_keeps_the_training_bar():
+    text = ("Caching latents: 100%|###| 25/25 [00:10<00:00]\r"
+            "job:  17%|#  | 250/1500 [03:20<16:40,  1.25it/s, lr: 1.0e-04 loss: 6.500e-01]\r"
+            "job:  17%|#  | 251/1500 [03:21<16:39,  1.25it/s, lr: 1.0e-04 loss: 5.900e-01]")
+    pg = ds_aitoolkit.parse_progress(text, 1500)
+    assert pg == {"step": 251, "total": 1500, "elapsed": "03:21", "eta": "16:39",
+                  "loss": "5.900e-01"}
+    assert ds_aitoolkit.parse_progress("Caching latents: 25/25 [00:10<00:00]", None) == {}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake interpreter is a symlink")
+def test_trainer_runs_to_the_lora_and_survives_a_restart(tmp_path):
+    root = fake_aitk_trainable(tmp_path)
+    state = str(tmp_path / "logs" / "training.json")
+    tr = ds_aitoolkit.Trainer(state)
+    st = tr.start(str(root), "job_v1", project="p")
+    assert st["running"] and st["steps"] == 1500
+    with pytest.raises(RuntimeError):
+        tr.start(str(root), "job_v1")
+    st = wait_done(tr)
+    assert st["result"] == "done" and st["returncode"] == 0
+    assert st["lora"].endswith(os.path.join("job_v1", "job_v1.safetensors"))
+    assert st["progress"]["step"] == 1500 and st["progress"]["loss"] == "6.5100e-01"
+    # a new Dataset Studio session reads the state back
+    st2 = ds_aitoolkit.Trainer(state).status()
+    assert st2["job"] == "job_v1" and st2["result"] == "done" and not st2["running"]
+    with pytest.raises(FileNotFoundError):
+        tr.start(str(root), "nope_v1")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake interpreter is a symlink")
+def test_trainer_failure_and_stop(tmp_path):
+    root = fake_aitk_trainable(tmp_path / "a", mode="fail")
+    tr = ds_aitoolkit.Trainer(str(tmp_path / "s1.json"))
+    tr.start(str(root), "job_v1")
+    st = wait_done(tr)
+    assert st["result"] == "failed" and st["returncode"] == 3 and not st["lora"]
+    assert any("out of memory" in l for l in st["tail"])
+    root = fake_aitk_trainable(tmp_path / "b", mode="slow")
+    tr = ds_aitoolkit.Trainer(str(tmp_path / "s2.json"))
+    tr.start(str(root), "job_v1")
+    time.sleep(0.5)
+    assert tr.stop() is True
+    st = tr.status()
+    assert st["result"] == "stopped" and not st["running"]
+    assert tr.stop() is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake interpreter is a symlink")
+def test_train_over_http_blocks_the_gpu(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_aitoolkit, "TRAINER", ds_aitoolkit.Trainer(str(tmp_path / "t.json")))
+    root = fake_aitk_trainable(tmp_path / "tk", mode="slow")
+    cfg = post(studio, "config_get")["config"]
+    cfg["ai_toolkit_dir"] = str(root)
+    post(studio, "config_set", {"config": cfg})
+    post(studio, "project_new", {"name": "p"})
+    r = post(studio, "aitk_train", {"name": "p"})
+    assert not r["ok"] and "create it first" in r["error"]
+    r = post(studio, "aitk_train", {"name": "p", "job": "job_v1"})
+    assert r["ok"] and r["training"]["running"]
+    assert post(studio, "status")["training"]["job"] == "job_v1"
+    r = post(studio, "run", {"name": "p"})
+    assert not r["ok"] and "GPU" in r["error"]
+    r = post(studio, "aitk_train_stop")
+    assert r["ok"] and r["stopped"] and r["training"]["result"] == "stopped"
