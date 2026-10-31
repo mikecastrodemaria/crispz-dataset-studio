@@ -26,5 +26,7 @@
   "output_dir": "out",
   "date_subfolders": true,
   "_output_help": "Where exports go, the crispz layout: 'output_dir' (relative = next to the app, like the family's default_output_dir 'out', or an absolute path), a YYYY-MM-DD subfolder when 'date_subfolders' is true, then one LOT folder per export, <project>_<YYYYMMDD-HHMMSS>/, holding the NNN.png + NNN.txt pairs, with <lot>.zip beside it. Never overwritten (_2, _3 on a same-second collision). The working files stay in projects/<name>/.",
+  "ai_toolkit_dir": "",
+  "_ai_toolkit_help": "Optional: the ai-toolkit (Ostris) folder, e.g. D:/Github/AI-Toolkit-Easy-Install/AI-Toolkit-Easy-Install/AI-Toolkit. A folder inside it (output, datasets) or the Easy-Install folder above it works too: the app finds the one holding run.py. When set, a finished dataset offers 'Create AI-Toolkit job': the export is copied to <ai-toolkit>/datasets/<job>/ and <ai-toolkit>/config/<job>.yaml is written (FLUX.2 Klein 4B or 9B recipe). Nothing leaves this PC and nothing starts on its own. 'ai_toolkit_datasets_dir' (optional) overrides the datasets folder.",
   "port": 8780
 }

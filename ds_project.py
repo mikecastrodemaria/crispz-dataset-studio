@@ -263,6 +263,41 @@ def create(name, engine=None, promptset="character-25"):
     return p
 
 
+def clone(src_name, new_name, with_renders=True):
+    """A copy of a project under a new name, to vary one setting (model, subject,
+    prompts) without losing the original. with_renders=True copies the cards and every
+    try as they are; False keeps the reference, its face embedding, the settings and
+    the prompts, and resets every card to pending (a fresh run of the same identity).
+    The last export is not carried over: the lot belongs to the source project."""
+    src = load(src_name)
+    sd = project_dir(src["name"])
+    dd = project_dir(new_name)
+    if os.path.exists(dd):
+        raise FileExistsError(f"project already exists: {os.path.basename(dd)}")
+    os.makedirs(os.path.join(dd, "cards"))
+    with _LOCK:
+        if src.get("reference") and os.path.isfile(os.path.join(sd, src["reference"])):
+            shutil.copy2(os.path.join(sd, src["reference"]), os.path.join(dd, src["reference"]))
+        p = json.loads(json.dumps(src))
+        if with_renders:
+            cdir = os.path.join(sd, "cards")
+            for f in os.listdir(cdir) if os.path.isdir(cdir) else []:
+                if os.path.isfile(os.path.join(cdir, f)):
+                    shutil.copy2(os.path.join(cdir, f), os.path.join(dd, "cards", f))
+        else:
+            p["cards"] = []
+            _rebuild_cards(p)
+    p["name"] = os.path.basename(dd)
+    p["created"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    p["cloned_from"] = src["name"]
+    p.pop("last_export", None)
+    p.pop("last_aitk", None)
+    save(p)
+    _log(f"cloned '{src['name']}' to '{p['name']}' "
+         f"({'with its renders' if with_renders else 'settings and reference only'})")
+    return p
+
+
 def load(name):
     with open(os.path.join(project_dir(name), "project.json"), encoding="utf-8") as fh:
         return json.load(fh)

@@ -31,6 +31,11 @@ Ops:
   status {}                             the run state (poll)
   card_update {name, index, caption?, status?, use_try?}
   export {name, size?, format?}         -> {zip_rel, count}
+  project_clone {name, new_name, with_renders?}  copy a project under a new name
+  aitk_status {}                        ai-toolkit folder found?, presets
+  aitk_create {name, preset?, steps?, lot?}  copy a lot into ai-toolkit's datasets
+                                        and write config/<job>.yaml (lot = an
+                                        export's lot path; none = a fresh export)
 """
 
 import os
@@ -48,6 +53,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import ds_engines
 import ds_project
+import ds_aitoolkit
 import ds_captions
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -67,6 +73,7 @@ def log(msg):
 
 ds_engines.set_log_hook(log)
 ds_project.set_log_hook(log)
+ds_aitoolkit.set_log_hook(log)
 
 
 def load_config():
@@ -141,6 +148,7 @@ class Studio:
         cfg.setdefault("port", self.config.get("port", DEFAULT_PORT))
         cfg.setdefault("output_dir", self.config.get("output_dir", ds_project.DEFAULT_OUTPUT_DIR))
         cfg.setdefault("date_subfolders", self.config.get("date_subfolders", True))
+        cfg.setdefault("ai_toolkit_dir", self.config.get("ai_toolkit_dir", ""))
         save_config(cfg)
         self.config = cfg
         self.engines.reload(cfg)
@@ -256,6 +264,42 @@ class Studio:
                               output_dir=self.config.get("output_dir"),
                               date_subfolders=bool(self.config.get("date_subfolders", True)))
         r["out_url"] = "/out/" + urllib.request.quote(r["zip_rel"])
+        return r
+
+    def op_project_clone(self, data):
+        p = self._project(data)
+        if self.runner.state["running"] and self.runner.state["project"] == p["name"]:
+            raise RuntimeError("wait for the run to finish before cloning this project")
+        new = ds_project.clone(p["name"], data.get("new_name"),
+                               with_renders=bool(data.get("with_renders", True)))
+        return {"project": new}
+
+    def op_aitk_status(self, data):
+        return {"aitk": ds_aitoolkit.status(self.config)}
+
+    def op_aitk_create(self, data):
+        p = self._project(data)
+        if self.runner.state["running"] and self.runner.state["project"] == p["name"]:
+            raise RuntimeError("wait for the run to finish before creating the job")
+        if not ds_aitoolkit.find_root(self.config.get("ai_toolkit_dir")):
+            raise FileNotFoundError(ds_aitoolkit.status(self.config).get("error") or
+                                    "set the AI-Toolkit folder in Settings first")
+        root = ds_project.output_root(self.config.get("output_dir"))
+        lot = str(data.get("lot") or "").strip()
+        lot_path = _safe_join(root, lot) if lot else None
+        exported = None
+        if not lot_path or not os.path.isdir(lot_path):
+            # no lot given (or it was moved): a fresh export, so the captions edited
+            # since the last one are the ones trained on
+            exported = self.op_export({"name": p["name"]})
+            lot_path = exported["dir"]
+            p = ds_project.load(p["name"])
+        r = ds_aitoolkit.create_job(p, lot_path, self.config, preset=data.get("preset"),
+                                    steps=data.get("steps"))
+        p["last_aitk"] = {k: r[k] for k in ("job", "dataset_dir", "config_path", "command")}
+        ds_project.save(p)
+        if exported:
+            r["exported"] = exported["lot"]
         return r
 
     def shutdown(self):

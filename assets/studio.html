@@ -51,11 +51,14 @@ dialog::backdrop{background:#000a}dialog h3{margin:0 0 10px}
 #log{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--mut);max-height:140px;overflow:auto;white-space:pre-wrap}
 #zoom img{display:block;width:auto;height:auto;max-width:calc(96vw - 16px);max-height:calc(96vh - 60px);object-fit:contain}
 small{color:var(--mut)}
+#doneBar{display:none;align-items:center;gap:8px;flex-wrap:wrap;border-color:var(--ok)}#doneBar b{color:var(--ok)}
+.cmd{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:11px}
 </style></head><body>
 <header>
   <h1>crispz Dataset Studio</h1>
   <select id="projSel" title="Project"></select>
   <button id="newProj">New project</button>
+  <button id="cloneProj" title="Copy this project under a new name">Clone</button>
   <span id="engineDot"><span class="dot"></span><span id="engineTxt">engine</span></span>
   <button id="engineBtn">Launch engine</button>
   <button id="runBtn" class="primary">Run</button>
@@ -106,7 +109,10 @@ small{color:var(--mut)}
   </div>
   <div class="box"><h2>Log</h2><div id="log"></div></div>
 </aside>
-<section class="grid"><div class="cards" id="cards"></div></section>
+<section class="grid">
+  <div class="box" id="doneBar"><b id="doneTxt">Dataset complete</b><span style="flex:1"></span>
+    <button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><small id="doneHint"></small></div>
+  <div class="cards" id="cards"></div></section>
 </main>
 
 <dialog id="settings">
@@ -118,6 +124,9 @@ small{color:var(--mut)}
   <div class="row"><label>Folder</label><input type="text" id="outDir" style="flex:1" placeholder="out (next to the app) or an absolute path"></div>
   <div class="row"><label></label><label><input type="checkbox" id="outDate"> date subfolders</label></div>
   <small>Same layout as the crispz apps: &lt;folder&gt;/YYYY-MM-DD/&lt;project&gt;_&lt;YYYYMMDD-HHMMSS&gt;/ holds the NNN.png + NNN.txt pairs of one export (a lot), with the ZIP of the same name beside it. Nothing is overwritten.</small>
+  <h3 style="margin-top:14px">AI-Toolkit (optional)</h3>
+  <div class="row"><label>Folder</label><input type="text" id="aitkDirSet" style="flex:1" placeholder="D:/Github/AI-Toolkit-Easy-Install/AI-Toolkit-Easy-Install/AI-Toolkit"></div>
+  <small id="aitkSetMsg">The ai-toolkit (Ostris) install, or any folder inside it (output, datasets): the app finds the one holding run.py. When set, a finished dataset offers to create the training job.</small>
   <h3 style="margin-top:14px">Ollama (captions)</h3>
   <div class="row"><label>URL</label><input type="text" id="olUrl" style="flex:1"></div>
   <div class="row"><label>Model</label><select id="olModel"><option value="">first vision model</option></select></div>
@@ -125,11 +134,38 @@ small{color:var(--mut)}
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="setCancel">Close</button><button id="setSave" class="primary">Save</button></div>
   <small id="setMsg"></small>
 </dialog>
+<dialog id="cloneDlg">
+  <h3>Clone project</h3>
+  <div class="row"><label>New name</label><input type="text" id="cloneName" style="flex:1"></div>
+  <div class="row"><label></label><label><input type="checkbox" id="cloneRenders" checked> keep the renders and their tries</label></div>
+  <small>Unchecked: the reference, its face, the settings and the prompts are copied, every card starts over as pending (to compare a model or a subject on the same identity). The last export stays with the original.</small>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('cloneDlg').close()">Cancel</button><button id="cloneGo" class="primary">Clone</button></div>
+  <small id="cloneMsg" class="err"></small>
+</dialog>
+<dialog id="aitkDlg">
+  <h3>Create an AI-Toolkit job</h3>
+  <p><small>Copies the dataset into <span id="aitkDs"></span> and writes the training config in its config folder. Everything stays on this PC; nothing starts on its own.</small></p>
+  <div class="row"><label>Model</label><select id="aitkPreset" style="flex:1"></select></div>
+  <div class="row"><label></label><small id="aitkNote"></small></div>
+  <div class="row"><label>Steps</label><input type="number" id="aitkSteps" min="50" max="100000" step="50"></div>
+  <div class="row"><label>Dataset</label><label style="min-width:0"><input type="checkbox" id="aitkUseLot"> use the export just made (<span id="aitkLot"></span>)</label></div>
+  <div class="row"><label></label><small>Unchecked: a fresh export is made first, with the captions as they are now.</small></div>
+  <div id="aitkOut" style="display:none;margin-top:10px">
+    <div class="row"><label>Job</label><b id="aitkJob"></b></div>
+    <div class="row"><label>Dataset</label><small id="aitkDir"></small></div>
+    <div class="row"><label>Config</label><small id="aitkCfg"></small></div>
+    <div class="row"><label>Command</label><input type="text" id="aitkCmd" class="cmd" readonly style="flex:1"><button id="aitkCopy">Copy</button></div>
+    <div id="aitkWarn"></div>
+    <small>Run the command in a terminal, or open ai-toolkit's UI: the dataset is in its list.</small>
+  </div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('aitkDlg').close()">Close</button><button id="aitkGo" class="primary">Create job</button></div>
+  <small id="aitkMsg" class="err"></small>
+</dialog>
 <dialog id="zoom"><img alt=""><div class="row" style="justify-content:space-between;margin-top:8px"><span id="zoomInfo"></span><span><button id="zoomPrev" title="previous card (left arrow)">&lt; Prev</button> <button id="zoomNext" title="next card (right arrow)">Next &gt;</button> <button onclick="document.getElementById('zoom').close()">Close (Esc)</button></span></div></dialog>
 
 <script>
 const $=id=>document.getElementById(id);
-let P=null, CFG=null, ENGINES=[], POLL=null, lastRunning=false;
+let P=null, CFG=null, ENGINES=[], POLL=null, lastRunning=false, AITK=null, JUST_LOT=null;
 async function api(op,data){const r=await fetch('/api/'+op,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})});return r.json();}
 function say(t,cls){$('status').textContent=t||'';$('status').className=cls||'';}
 function logLines(lines){$('log').textContent=(lines||[]).join('\n');$('log').scrollTop=1e9;}
@@ -167,11 +203,14 @@ $('modelSel').onchange=()=>{const sel=$('modelSel');if(sel.value==='custom'){$('
 async function loadProjects(sel){const r=await api('projects');const s=$('projSel');s.innerHTML='';
   (r.projects||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.done}/${p.cards})`;s.appendChild(o);});
   if(sel)s.value=sel; if(s.value)await openProject(s.value); else renderEmpty();}
-function renderEmpty(){P=null;$('cards').innerHTML='<p style="color:var(--mut)">No project yet: click New project.</p>';$('ref').style.display='none';}
+function renderEmpty(){P=null;renderDoneBar();$('cards').innerHTML='<p style="color:var(--mut)">No project yet: click New project.</p>';$('ref').style.display='none';}
 async function openProject(name){const r=await api('project_get',{name});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();}
 $('newProj').onclick=async()=>{const name=prompt('Project name (letters, digits, - _ .)');if(!name)return;
   const r=await api('project_new',{name,engine:$('engSel').value||undefined});if(!r.ok)return say(r.error,'err');await loadProjects(r.project.name);};
-$('projSel').onchange=()=>openProject($('projSel').value);
+$('projSel').onchange=()=>{JUST_LOT=null;openProject($('projSel').value);};
+$('cloneProj').onclick=()=>{if(!P)return say('no project to clone','err');$('cloneName').value=P.name+'-copy';$('cloneRenders').checked=true;$('cloneMsg').textContent='';$('cloneDlg').showModal();$('cloneName').select();};
+$('cloneGo').onclick=async()=>{const r=await api('project_clone',{name:P.name,new_name:$('cloneName').value.trim(),with_renders:$('cloneRenders').checked});
+  if(!r.ok){$('cloneMsg').textContent=r.error;return;}$('cloneDlg').close();JUST_LOT=null;await loadProjects(r.project.name);say(`cloned to ${r.project.name}`);};
 
 // The settings fields are filled when a project is OPENED or its prompt set changes,
 // never from the poll: filling them every 1.5 s during a run erased what was being typed
@@ -242,12 +281,36 @@ async function poll(){clearTimeout(POLL);const r=await api('status');const s=r.s
   $('bar').firstElementChild.style.width=s.total?Math.round(100*s.done/s.total)+'%':'0';
   if(s.text)say((s.running?'':'')+s.text,s.ok===false?'err':'');logLines(s.log);
   if(s.running||lastRunning){if(P&&s.project===P.name){const pr=await api('project_get',{name:P.name});if(pr.ok){P=pr.project;renderCards(s.current);fillRef();projectLabel();}}}
-  if(!s.running&&lastRunning){refreshEngines();}
-  lastRunning=!!s.running;POLL=setTimeout(poll,s.running?1500:6000);}
+  const ended=!s.running&&lastRunning;lastRunning=!!s.running;
+  if(ended){refreshEngines();renderDoneBar();if(datasetComplete()&&s.project===P.name)say(AITK&&AITK.root?'dataset complete: export it, or create the AI-Toolkit job (green bar above the cards)':'dataset complete: export it (green bar above the cards)');}POLL=setTimeout(poll,s.running?1500:6000);}
 
 // ---------- cards ----------
 function badge(c){if(c.scored===false&&c.file)return `<span class="badge" title="unscored line: the face model cannot judge it">n/s ${c.score??''}</span>`;if(c.score===null||c.score===undefined)return '';const cls=c.score>=(P.settings.threshold||0)?'ok':(c.score>0?'low':'zero');return `<span class="badge ${cls}">${c.score}</span>`;}
-function renderCards(current){if(!P)return;const el=$('cards');el.innerHTML='';
+// ---------- dataset complete: export / AI-Toolkit ----------
+// "Complete" = no card left to render (pending, failed, rendering) and at least one kept.
+// Rejected cards do not block: the user dropped them on purpose.
+function datasetComplete(){if(!P||!P.cards.length)return false;const done=P.cards.filter(c=>c.status==='done').length;
+  return done>0&&!P.cards.some(c=>['pending','failed','rendering'].includes(c.status));}
+function renderDoneBar(){const ok=datasetComplete()&&!lastRunning;$('doneBar').style.display=ok?'flex':'none';if(!ok)return;
+  const done=P.cards.filter(c=>c.status==='done').length;$('doneTxt').textContent=`Dataset complete: ${done} card(s) kept`;
+  const ready=AITK&&AITK.root;$('doneAitk').style.display=ready?'':'none';
+  $('doneHint').textContent=ready?(P.last_aitk?`last job: ${P.last_aitk.job}`:''):(AITK&&AITK.error?AITK.error:'set the AI-Toolkit folder in Settings to create the training job from here');}
+async function refreshAitk(){const r=await api('aitk_status');AITK=r.ok?r.aitk:null;renderDoneBar();}
+function openAitk(){if(!P||!AITK||!AITK.root)return;const s=$('aitkPreset');s.innerHTML='';
+  AITK.presets.forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=p.label;o.dataset.note=p.note;s.appendChild(o);});
+  s.value=AITK.default_preset;s.onchange=()=>$('aitkNote').textContent=s.selectedOptions[0].dataset.note;s.onchange();
+  $('aitkSteps').value=AITK.default_steps;$('aitkDs').textContent=AITK.datasets_dir;
+  $('aitkUseLot').checked=!!JUST_LOT;$('aitkUseLot').disabled=!JUST_LOT;$('aitkLot').textContent=JUST_LOT||'none in this session';
+  $('aitkOut').style.display='none';$('aitkMsg').textContent='';$('aitkGo').disabled=false;$('aitkDlg').showModal();}
+$('doneAitk').onclick=openAitk;$('doneExport').onclick=()=>$('exportBtn').click();
+$('aitkGo').onclick=async()=>{$('aitkGo').disabled=true;$('aitkMsg').textContent='';say('creating the AI-Toolkit job...');
+  const r=await api('aitk_create',{name:P.name,preset:$('aitkPreset').value,steps:+$('aitkSteps').value,lot:$('aitkUseLot').checked?JUST_LOT:undefined});
+  $('aitkGo').disabled=false;if(!r.ok){$('aitkMsg').textContent=r.error;return say(r.error,'err');}
+  $('aitkJob').textContent=r.job;$('aitkDir').textContent=r.dataset_dir;$('aitkCfg').textContent=r.config_path;$('aitkCmd').value=r.command;
+  $('aitkWarn').innerHTML=(r.warnings||[]).map(w=>`<div class="warn">${esc(w)}</div>`).join('');$('aitkOut').style.display='';$('aitkGo').disabled=true;
+  if(r.exported)JUST_LOT=r.exported;say(`AI-Toolkit job ${r.job}: ${r.pairs} pair(s) copied, config written`);P.last_aitk={job:r.job};renderDoneBar();};
+$('aitkCopy').onclick=()=>{$('aitkCmd').select();(navigator.clipboard?navigator.clipboard.writeText($('aitkCmd').value):Promise.reject()).catch(()=>document.execCommand('copy'));};
+function renderCards(current){if(!P)return;renderDoneBar();const el=$('cards');el.innerHTML='';
   P.cards.forEach(c=>{const d=document.createElement('div');d.className='card '+(c.status||'')+(c.index===current?' rendering':'');
     const img=c.file?`<img src="/file/${P.name}/${c.file}" data-i="${c.index}">`:`<span>${c.status==='rendering'||c.index===current?'rendering...':(c.status==='failed'?'failed':'pending')}</span>`;
     d.innerHTML=`<div class="img">${img}${badge(c)}<span class="idx">${String(c.index).padStart(3,'0')}${c.tries.length>1?' · '+c.tries.length+' tries':''}</span></div>
@@ -278,12 +341,13 @@ $('cards').addEventListener('click',async ev=>{const b=ev.target.closest('button
   else if(b.dataset.act==='reroll'){r=await api('run',{name:P.name,only:[i],force:true,engine:$('engSel').value||undefined});if(r.ok&&r.started){say('re-rolling card '+i);poll();}}
   if(r&&!r.ok)say(r.error,'err');if(b.dataset.act!=='reroll'){await openProject(P.name);}});
 $('cards').addEventListener('change',async ev=>{const t=ev.target;
+  JUST_LOT=null;
   if(t.dataset.cap){const r=await api('card_update',{name:P.name,index:+t.dataset.cap,caption:t.value});if(!r.ok)say(r.error,'err');}
   if(t.dataset.try){const r=await api('card_update',{name:P.name,index:+t.dataset.try,use_try:+t.value});if(!r.ok)say(r.error,'err');await openProject(P.name);}});
 $('exportBtn').onclick=async()=>{if(!P)return;say('exporting...');const r=await api('export',{name:P.name,size:+$('expsize').value,format:$('expfmt').value});
   if(!r.ok)return say(r.error,'err');say(`exported ${r.count} pair(s)${r.skipped.length?', skipped '+r.skipped.length:''} at ${r.size}px ${r.format} to ${r.dir}`);
   const a=document.createElement('a');a.href=r.out_url;a.textContent='download '+r.zip_rel.split('/').pop();a.download='';$('log').prepend(a);
-  window.open(`/file/${P.name}/${r.zip_rel}`,'_blank');};
+  JUST_LOT=r.lot;window.open(r.out_url,'_blank');};
 
 // ---------- settings dialog ----------
 function engRow(name,e){const d=document.createElement('div');d.className='eng';d.innerHTML=`
@@ -293,7 +357,8 @@ function engRow(name,e){const d=document.createElement('div');d.className='eng';
   d.querySelector('.rm').onclick=()=>d.remove();return d;}
 $('settingsBtn').onclick=async()=>{const r=await api('config_get');CFG=r.config;const l=$('engList');l.innerHTML='';
   Object.entries(CFG.engines||{}).forEach(([n,e])=>l.appendChild(engRow(n,e)));
-  $('olUrl').value=(CFG.ollama||{}).url||'http://127.0.0.1:11434';$('outDir').value=CFG.output_dir||'out';$('outDate').checked=CFG.date_subfolders!==false;
+  $('olUrl').value=(CFG.ollama||{}).url||'http://127.0.0.1:11434';$('outDir').value=CFG.output_dir||'out';$('outDate').checked=CFG.date_subfolders!==false;$('aitkDirSet').value=CFG.ai_toolkit_dir||'';
+  $('aitkSetMsg').textContent=AITK&&AITK.root?`found: ${AITK.root}`:(AITK&&AITK.error?AITK.error:'The ai-toolkit (Ostris) install, or any folder inside it (output, datasets): the app finds the one holding run.py. When set, a finished dataset offers to create the training job.');
   const m=await api('ollama_models');const s=$('olModel');s.innerHTML='<option value="">first vision model</option>';(m.models||[]).forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent=x;s.appendChild(o);});
   const cur=(CFG.ollama||{}).model||'';if(cur&&!(m.models||[]).includes(cur)){const o=document.createElement('option');o.value=cur;o.textContent=cur+' (not a vision model, or not installed)';s.appendChild(o);}
   s.value=cur;$('olMsg').textContent=m.message||((m.models||[]).length?`${m.models.length} vision model(s) of ${m.installed} installed`:(m.installed?'' :'Ollama not reachable'));$('setMsg').textContent=r.exists?`writes ${r.config_file}`:`no config.json yet: Save creates ${r.config_file}`;$('settings').showModal();};
@@ -301,12 +366,12 @@ $('addEng').onclick=()=>$('engList').appendChild(engRow('',{url:'http://127.0.0.
 $('setCancel').onclick=()=>$('settings').close();
 $('setSave').onclick=async()=>{const engines={};$('engList').querySelectorAll('.eng').forEach(d=>{const n=d.querySelector('.n').value.trim();if(!n)return;
     engines[n]={url:d.querySelector('.u').value.trim(),dir:d.querySelector('.d').value.trim(),launch:d.querySelector('.l').checked};const p=d.querySelector('.p').value.trim();if(p)engines[n].python=p;});
-  const cfg=Object.assign({},CFG,{output_dir:$('outDir').value.trim()||'out',date_subfolders:$('outDate').checked,engines,ollama:{url:$('olUrl').value.trim(),model:$('olModel').value,keep_alive:(CFG.ollama||{}).keep_alive??0}});
+  const cfg=Object.assign({},CFG,{output_dir:$('outDir').value.trim()||'out',ai_toolkit_dir:$('aitkDirSet').value.trim(),date_subfolders:$('outDate').checked,engines,ollama:{url:$('olUrl').value.trim(),model:$('olModel').value,keep_alive:(CFG.ollama||{}).keep_alive??0}});
   if(!cfg.engine||!engines[cfg.engine])cfg.engine=Object.keys(engines)[0]||'';
-  const r=await api('config_set',{config:cfg});if(!r.ok){$('setMsg').textContent=r.error;return;}$('settings').close();refreshEngines();say('settings saved');};
+  const r=await api('config_set',{config:cfg});if(!r.ok){$('setMsg').textContent=r.error;return;}$('settings').close();refreshEngines();await refreshAitk();say(AITK&&AITK.error?AITK.error:'settings saved',AITK&&AITK.error?'warn':'');};
 
 // ---------- boot ----------
 (async()=>{const ps=await api('promptsets');(ps.promptsets||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.count})`;$('psSel').appendChild(o);});
-  await refreshEngines();await loadProjects();poll();setInterval(refreshEngines,15000);})();
+  await refreshEngines();await refreshAitk();await loadProjects();poll();setInterval(refreshEngines,15000);})();
 </script>
 </body></html>

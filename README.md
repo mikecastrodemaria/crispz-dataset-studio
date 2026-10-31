@@ -27,6 +27,19 @@
    layout: `out/YYYY-MM-DD/<project>_<YYYYMMDD-HHMMSS>/` (one lot per export, never
    overwritten) and the ZIP of the same name beside it. The viewer walks the cards
    with Prev / Next or the arrow keys.
+7. Hand it to ai-toolkit (optional, local). With the AI-Toolkit folder set in
+   Settings (the install itself, a folder inside it such as `output`, or the
+   Easy-Install folder above it: the app finds the one holding `run.py`), a finished
+   dataset shows a green bar with "Create AI-Toolkit job": the pairs are copied to
+   `<ai-toolkit>/datasets/<project>_<preset>_vN/` and the config is written to
+   `<ai-toolkit>/config/<same name>.yaml`, with the FLUX.2 Klein 4B or 9B recipe of
+   `docs/lora-klein-2026-10-31.md` (rank 16, 1500 steps by default). Nothing starts on
+   its own: the dialog gives the command line, or the dataset is in ai-toolkit's UI.
+   A new job never overwrites an earlier one (`_v2`, `_v3`).
+
+"Clone" (header) copies the open project under a new name, with its renders and
+tries, or with the reference, settings and prompts only (every card pending): to try
+another model or subject on the same identity without losing the first dataset.
 
 Everything is on disk under `projects/<name>/` (`project.json`, `reference.png`,
 `cards/NNN_tK.png`): a run resumes where it stopped and re-renders only the pending,
