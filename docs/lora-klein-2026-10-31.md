@@ -5,10 +5,11 @@ Objectif : vérifier qu'un dataset sorti de Dataset Studio (25 rendus flux3 du p
 `ohwx character`) s'entraîne tel quel dans ai-toolkit (Ostris) et que le LoRA obtenu
 fonctionne dans crispz-klein.
 
-Résultat en une ligne : **le LoRA Klein 4B est entraîné (1500 pas, 24 min, 46 Mo) et
-reconnu dans crispz-klein : ressemblance ArcFace moyenne 57 avec le LoRA contre 1,5 sans.**
-Le LoRA 9B n'a pas pu démarrer : le repo `black-forest-labs/FLUX.2-klein-base-9B` est gated
-et le compte HF de la machine n'y a pas accès.
+Résultat en une ligne : **les deux LoRAs sont entraînés et reconnus dans crispz-klein.
+Klein 4B : 1500 pas en 24 min, 46 Mo, ressemblance ArcFace moyenne 57 contre 1,5 sans LoRA.
+Klein 9B : 1500 pas en 50 min, 83 Mo, moyenne 65 sur les plans où le visage est visible,
+contre 2 sans LoRA.** Le 9B a d'abord été bloqué par le gate HF du repo
+`black-forest-labs/FLUX.2-klein-base-9B`, levé par Mike dans la matinée.
 
 ## 1. Chronologie et actions
 
@@ -25,6 +26,11 @@ et le compte HF de la machine n'y a pas accès.
 | 09:10 | LoRA copié dans `crispz-klein\loras`, 8 rendus de test (4 prompts, avec et sans LoRA) |
 | 09:25 | Premier passage invalidé : crispz-klein était sur le 9B, le LoRA a été sauté (tailles cachées 3072 contre 4096, message du moteur). Relance avec `--klein-model black-forest-labs/FLUX.2-klein-4B` |
 | 09:35 | Notation ArcFace des 8 rendus face à la référence via le moteur klein (Dataset Studio) |
+| 09:22 et 09:33 | Deux relances du 9B refusées (403) : le gate n'était pas encore accepté par le compte KimHose |
+| 09:38 | Gate accepté, lancement du 9B ; téléchargement du transformer base 9B (18 Go) et de Qwen3-8B (16 Go) |
+| 09:44 | Latents en cache, échantillons de départ ; pas 250 à 09:52 (1,6 s par pas, 24 Go de VRAM) |
+| 10:35 | Pas 1500, `ohwx_flux3_klein9b_v1.safetensors` écrit (83 Mo) |
+| 10:40 | LoRA copié dans `crispz-klein\loras`, 4 rendus sur le 9B distillé, notation des 16 images |
 
 ## 2. Résultats
 
@@ -72,16 +78,43 @@ Sans LoRA, mêmes prompts et seeds :
 
 ![sans LoRA](lora-klein4b-base-renders.jpg)
 
-### 9B : bloqué
+### Entraînement 9B (ai-toolkit)
 
-```
-Cannot access gated repo for url https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9B/resolve/main/flux-2-klein-base-9b.safetensors
-Access to model black-forest-labs/FLUX.2-klein-base-9B is restricted and you are not in the authorized list.
-```
+| Mesure | Valeur |
+|---|---|
+| Modèle d'entraînement | `black-forest-labs/FLUX.2-klein-base-9B`, transformer quantifié en 8 bits (qfloat8), Qwen3-8B en 8 bits |
+| LoRA | même recette que le 4B : rang 16, alpha 16, adamw8bit, lr 1e-4, sigmoid, 1500 pas |
+| Durée | 50 min du premier échantillon au fichier final (1,6 s par pas, échantillons 34 s pièce) |
+| VRAM | 24 Go |
+| Perte | 0,44 à 0,77 par pas sur le dernier tiers |
+| Sorties | `output\ohwx_flux3_klein9b_v1\ohwx_flux3_klein9b_v1.safetensors` (83 Mo) + sauvegardes 250 à 1250, 28 échantillons |
 
-Le 4B base est libre, le 9B base demande une acceptation sur sa page HF (le 9B distillé,
-lui, est déjà dans le cache). Une fois l'accès accordé, la config `ohwx_flux3_klein9b_v1.yaml`
-est prête (même recette, transformer en 8 bits) et la commande du §3 la lance.
+Les échantillons à 1500 pas tiennent le personnage comme le 4B, avec les cheveux plus
+franchement auburn (le 4B tire vers le châtain).
+
+Le gate : le 4B base est libre, le 9B base demande d'accepter la licence sur sa page HF
+avec le compte dont le jeton est sur la machine (KimHose). Tant que ce n'est pas fait, les
+métadonnées du repo se lisent (d'où un faux "accès OK" au premier contrôle) mais le fichier
+répond 403, jeton ou pas. `HfApi().auth_check(repo)` est le test fiable.
+
+### Test dans crispz-klein (FLUX.2-klein-9B distillé, 4 pas, offload 'model', seed 42, 832x1216)
+
+| Prompt | sans LoRA | avec LoRA 9B 1.0 |
+|---|---|---|
+| close-up portrait, facing the camera, grey background | 0 | 63 |
+| medium shot, black turtleneck, arms crossed, city street | 0 | 73 |
+| full body, walking on a beach at sunset, white dress | pas de visage | pas de visage (vue de dos) |
+| sitting at a cafe table with a coffee cup, smiling | 8 | 60 |
+| **moyenne (3 plans notés)** | **2,7** | **65,3** |
+
+Le 9B tient le visage un cran au-dessus du 4B (63 / 73 / 60 contre 59 / 63 / 47 sur les
+mêmes plans) et garde les taches de rousseur et la couleur auburn. Le plan plage est sorti
+de dos avec le même seed : pas de visage, donc non noté. Chaque rendu prend 45 à 54 s en
+ligne de commande, chargement et offload compris (le 9B ne tient pas entier en 32 Go).
+
+Avec LoRA 9B (référence à gauche) :
+
+![LoRA 9B dans crispz-klein](lora-klein9b-renders.jpg)
 
 ## 3. Lignes de commande utilisées
 
@@ -105,10 +138,23 @@ $env:PYTHONUTF8 = '1'
 .\.venv\Scripts\python.exe run.py config\ohwx_flux3_klein4b_v1.yaml --log output\ohwx_flux3_klein4b_v1.log
 ```
 
-Enchaînement du 9B après le 4B (attend la fin du processus, puis lance) :
+Entraînement 9B (le jeton HF est passé explicitement : ai-toolkit lit `HF_TOKEN` et une
+valeur vide dans ses réglages suffit à perdre l'accès aux repos gated) :
 
 ```powershell
-Wait-Process -Id <pid du 4B>; .\.venv\Scripts\python.exe run.py config\ohwx_flux3_klein9b_v1.yaml --log output\ohwx_flux3_klein9b_v1.log
+$env:HF_TOKEN = (Get-Content "$env:USERPROFILE\.cache\huggingface\token" -Raw).Trim(); $env:PYTHONUTF8 = '1'; .\.venv\Scripts\python.exe run.py config\ohwx_flux3_klein9b_v1.yaml --log output\ohwx_flux3_klein9b_v1.log
+```
+
+Contrôle d'accès avant de lancer :
+
+```bash
+python -c "from huggingface_hub import HfApi; HfApi().auth_check('black-forest-labs/FLUX.2-klein-base-9B'); print('granted')"
+```
+
+Rendu de test 9B (même commande que le 4B avec le 9B et son LoRA) :
+
+```bash
+cd /d/Github/crispz-klein && PYTHONUTF8=1 .venv/Scripts/python app.py --txt2img --prompt "ohwx character, same person, close-up portrait, facing the camera, neutral expression, soft studio light, plain grey background" --gen-width 832 --gen-height 1216 --seed 42 --klein-model "black-forest-labs/FLUX.2-klein-9B" --save-mode local --output-dir /d/Github/crispz-dataset-studio/out/lora-test-4b --print-output --lora ohwx_flux3_klein9b_v1.safetensors:1.0
 ```
 
 Copie du LoRA dans crispz-klein :
@@ -152,8 +198,9 @@ flux2_klein_4b`, `name_or_path: black-forest-labs/FLUX.2-klein-base-4B`, `quanti
 ## 5. Fichiers
 
 - LoRA 4B : `D:\Github\AI-Toolkit-Easy-Install\AI-Toolkit-Easy-Install\AI-Toolkit\output\ohwx_flux3_klein4b_v1\ohwx_flux3_klein4b_v1.safetensors` et sa copie `D:\Github\crispz-klein\loras\ohwx_flux3_klein4b_v1.safetensors`
-- Échantillons ai-toolkit : `...\output\ohwx_flux3_klein4b_v1\samples\`
-- Rendus de test et scores : `D:\Github\crispz-dataset-studio\out\lora-test-4b\` (`base_i.png`, `lora_i.png`, `scores.json`, `on9b\` = le premier passage sur le 9B)
+- LoRA 9B : `...\output\ohwx_flux3_klein9b_v1\ohwx_flux3_klein9b_v1.safetensors` et `D:\Github\crispz-klein\loras\ohwx_flux3_klein9b_v1.safetensors`
+- Échantillons ai-toolkit : `...\output\ohwx_flux3_klein4b_v1\samples\` et `...\ohwx_flux3_klein9b_v1\samples\`
+- Rendus de test et scores : `D:\Github\crispz-dataset-studio\out\lora-test-4b\` (`base_i.png` / `lora_i.png` sur le 4B, `base9b_i.png` / `lora9b_i.png` sur le 9B, `scores.json`)
 - Configs : `AI-Toolkit\config\ohwx_flux3_klein4b_v1.yaml` et `ohwx_flux3_klein9b_v1.yaml`
 - Journaux : `AI-Toolkit\output\ohwx_flux3_klein4b_v1.log` / `.stdout.txt` / `.stderr.txt`, idem `9b`
 
@@ -164,11 +211,12 @@ flux2_klein_4b`, `name_or_path: black-forest-labs/FLUX.2-klein-base-4B`, `quanti
   parseur (`unknown escape character`) : les chemins de la config sont en `/`.
 - crispz-klein garde son modèle par défaut (9B) : un LoRA 4B y est sauté avec un message
   explicite. `--klein-model` ou le menu "Klein checkpoint" règle la question.
-- `FLUX.2-klein-base-9B` est gated, contrairement au 4B : à demander sur HF avant de lancer.
+- `FLUX.2-klein-base-9B` est gated, contrairement au 4B : la licence s'accepte avec le
+  compte dont le jeton est sur la machine, et `auth_check` est le seul contrôle fiable
+  (`model_info` répond même sans accès).
 
 ## 7. Suite proposée
 
-- 9B dès l'accès HF accordé (35 Go à télécharger, compter 45 min d'entraînement en 8 bits).
 - Comparer les sauvegardes 1000 / 1250 / 1500 dans crispz-klein avec le même script de
   notation, pour choisir le pas qui tient le mieux sans sur-apprendre.
 - Essayer le LoRA à 0,8 et des prompts hors dataset (autres tenues, autres lieux).
