@@ -41,11 +41,19 @@ Ops:
   aitk_train_stop {}                    stop the training (whole process tree)
   lora_targets {name, job?}             the job's LoRA files + the engines' LoRA folders
   lora_copy {name, job?, file?, engine?} copy a LoRA of the job into an engine's folder
-  lora_score {name, job?, files?, engine?, prompts?, weight?, baseline?, seed?}
+  lora_score {name, job?, files?, engine?, prompts?, weight?, baseline?, seed?,
+              switch_model?}
                                         txt2img tests with / without the LoRA, scored
                                         against the reference (thread; see status)
   lora_score_cancel {}
-  status {} also carries 'training' and 'lora_score' (job, progress, log tail, result)
+  lora_keep_best {name, job?, engine?}  only the best scored save stays in the engine,
+                                        as <project>_<preset>_best.safetensors
+  autopilot_start {name}                Run + export + job + training + score, hands off
+                                        (the project's auto_* settings)
+  autopilot_queue {names: [...]}        the autopilot on several projects, one after
+                                        the other (each with its own auto_* settings)
+  autopilot_cancel {all?}               all: also empty the queue
+  status {} also carries 'training', 'lora_score' and 'autopilot' (job, progress, log tail, result)
 """
 
 import os
@@ -65,6 +73,7 @@ import ds_engines
 import ds_project
 import ds_aitoolkit
 import ds_lorascore
+import ds_autopilot
 import ds_captions
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -86,6 +95,7 @@ ds_engines.set_log_hook(log)
 ds_project.set_log_hook(log)
 ds_aitoolkit.set_log_hook(log)
 ds_lorascore.set_log_hook(log)
+ds_autopilot.set_log_hook(log)
 
 
 def load_config():
@@ -118,7 +128,26 @@ class Studio:
         self.config = config or load_config()
         self.engines = ds_engines.Engines(self.config)
         self.runner = ds_project.RUNNER
+        self._resume_autopilot()
 
+    def _resume_autopilot(self):
+        """A chain cut by a restart during the training: the training is detached and
+        went on, so the chain picks up there (then scores). Any other step: said."""
+        ap = ds_autopilot.autopilot()
+        st = ap.status()
+        cut = st.get("interrupted")
+        if not cut:
+            return
+        tr = ds_aitoolkit.trainer()
+        if cut == "training" and st.get("job") and tr.state.get("job") == st["job"]:
+            log(f"autopilot: resuming '{st.get('project')}' at the training ({st['job']})")
+            try:
+                ap.start(self, st["project"], resume_at="training")
+            except Exception as e:
+                log(f"autopilot: cannot resume: {e}")
+        else:
+            log(f"autopilot: the chain of '{st.get('project')}' was cut at the {cut} by a "
+                f"restart; Run again to go on")
     # -- helpers --------------------------------------------------------------
     def _project(self, data):
         name = data.get("name")
@@ -270,7 +299,8 @@ class Studio:
 
     def op_status(self, data):
         return {"status": self.runner.status(), "training": ds_aitoolkit.trainer().status(),
-                "lora_score": ds_lorascore.SCORER.status()}
+                "lora_score": ds_lorascore.SCORER.status(),
+                "autopilot": ds_autopilot.autopilot().status()}
 
     def op_card_update(self, data):
         p = self._project(data)
@@ -334,6 +364,11 @@ class Studio:
             raise ValueError("no AI-Toolkit job for this project yet: create it first")
         if self.runner.state["running"] or ds_lorascore.SCORER.state["running"]:
             raise RuntimeError("a dataset run or a LoRA scoring is in progress: the GPU is busy")
+        gated = ds_aitoolkit.gated_repo_of(config_path=os.path.join(root, "config", job + ".yaml"))
+        if gated:
+            acc = ds_aitoolkit.check_hf_access(root, gated)
+            if acc.get("ok") is False:
+                raise PermissionError(acc["error"])
         # One GPU: the engine Dataset Studio started holds 15 to 30 GB. It is stopped
         # only when the user said so (stop_engine), never silently.
         busy = self.engines.alive_child()
@@ -344,6 +379,9 @@ class Studio:
                                  f"GPU: stop it to train"}
             log(f"training: stopping engine '{busy.name}' first (GPU)")
             busy.stop()
+            stopped = busy.name
+        else:
+            stopped = None
         warnings = []
         others = [e["name"] for e in self.engines.statuses()
                   if e.get("running") and not e.get("started_by_us")]
@@ -353,7 +391,7 @@ class Studio:
             for w in warnings:
                 log(f"training: {w}")
         st = ds_aitoolkit.trainer().start(root, job, project=p["name"])
-        return {"training": st, "warnings": warnings}
+        return {"training": st, "warnings": warnings, "stopped_engine": stopped}
 
     def op_aitk_train_stop(self, data):
         return {"stopped": ds_aitoolkit.trainer().stop(),
@@ -417,7 +455,8 @@ class Studio:
         if target is None:
             raise ValueError(f"engine '{eng}' has no install folder in Settings: "
                              f"its LoRA folder is unknown")
-        r = ds_aitoolkit.copy_lora(src["path"], target["loras_dir"])
+        r = ds_aitoolkit.copy_lora(src["path"], target["loras_dir"],
+                                   meta=ds_aitoolkit.lora_meta_for(p, job))
         hint = self._arch_hint(ds_aitoolkit.job_arch(root, job))
         la = p.setdefault("last_aitk", {"job": job})
         la.setdefault("copied", [])
@@ -451,11 +490,75 @@ class Studio:
             p["name"], self.engines, eng or None, root, job, files or [], prompts=prompts,
             weight=float(data.get("weight") or 1.0), baseline=bool(data.get("baseline", True)),
             seed=int(data.get("seed") if data.get("seed") not in (None, "") else ds_lorascore.DEFAULT_SEED),
-            loras_dir=ds_aitoolkit.engine_loras_dir(ec.get("dir"), ec.get("loras_dir")) if ec else None)
+            loras_dir=ds_aitoolkit.engine_loras_dir(ec.get("dir"), ec.get("loras_dir")) if ec else None,
+            switch_model=bool(data.get("switch_model", True)))
         return {"lora_score": st}
+
+    def op_lora_keep_best(self, data):
+        p = self._project(data)
+        root, job = self._job_of(p, data)
+        if ds_lorascore.SCORER.state["running"]:
+            raise RuntimeError("wait for the LoRA scoring to finish")
+        names = [e["name"] for e in self._lora_engines()]
+        eng = str(data.get("engine") or ("klein" if "klein" in names else "")).strip()
+        target = next((e for e in self._lora_engines() if e["name"] == eng), None)
+        if target is None:
+            raise ValueError(f"engine '{eng}' has no install folder in Settings")
+        return ds_lorascore.keep_best(p["name"], root, job, target["loras_dir"])
 
     def op_lora_score_cancel(self, data):
         return {"cancelled": ds_lorascore.SCORER.cancel()}
+
+    def _autopilot_opts(self, p, engine=None):
+        s = p.get("settings") or {}
+        if not p.get("reference"):
+            raise ValueError(f"'{p['name']}': set a reference photo first")
+        return {"engine": engine or p.get("engine") or None,
+                "preset": s.get("auto_preset") or "klein4b",
+                "steps": int(s.get("auto_steps") or 1500),
+                "score": bool(s.get("auto_score", True)),
+                "score_engine": s.get("auto_score_engine") or "",
+                "keep_best": bool(s.get("auto_keep_best", True))}
+
+    def _autopilot_guard(self):
+        if not ds_aitoolkit.find_root(self.config.get("ai_toolkit_dir")):
+            raise FileNotFoundError("the autopilot needs the AI-Toolkit folder: set it in Settings")
+        self._training_guard("starting the autopilot")
+        if self.runner.state["running"] or ds_lorascore.SCORER.state["running"]:
+            raise RuntimeError("a run or a LoRA scoring is in progress: wait for it")
+
+    def _gate_check(self, opts_list):
+        """Before the first card is rendered: the gated base of every preset asked."""
+        root = ds_aitoolkit.find_root(self.config.get("ai_toolkit_dir"))
+        for repo in sorted({ds_aitoolkit.gated_repo_of(o.get("preset")) for o in opts_list} - {None}):
+            acc = ds_aitoolkit.check_hf_access(root, repo)
+            if acc.get("ok") is False:
+                raise PermissionError(acc["error"])
+
+    def op_autopilot_queue(self, data):
+        names = [str(n) for n in (data.get("names") or []) if str(n).strip()]
+        if not names:
+            raise ValueError("pick at least one project")
+        self._autopilot_guard()
+        items = [(ds_project.load(n)["name"], self._autopilot_opts(ds_project.load(n)))
+                 for n in names]
+        self._gate_check([o for _, o in items])
+        st = ds_autopilot.autopilot().start_queue(self, items)
+        log(f"autopilot: queue of {len(items)} project(s) started")
+        return {"autopilot": st}
+
+    def op_autopilot_start(self, data):
+        p = self._project(data)
+        self._autopilot_guard()
+        opts = self._autopilot_opts(p, data.get("engine"))
+        self._gate_check([opts])
+        st = ds_autopilot.autopilot().start(self, p["name"], opts, queue=[], history=[])
+        log(f"autopilot: '{p['name']}' started ({opts['preset']}, {opts['steps']} steps, "
+            f"score on {opts['score_engine'] or 'none'})")
+        return {"autopilot": st}
+
+    def op_autopilot_cancel(self, data):
+        return {"cancelled": ds_autopilot.autopilot().cancel(self, all_=bool(data.get("all")))}
 
     def shutdown(self):
         self.engines.stop_all()

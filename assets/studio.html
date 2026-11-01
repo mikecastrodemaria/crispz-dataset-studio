@@ -52,6 +52,9 @@ dialog::backdrop{background:#000a}dialog h3{margin:0 0 10px}
 #zoom img{display:block;width:auto;height:auto;max-width:calc(96vw - 16px);max-height:calc(96vh - 60px);object-fit:contain}
 small{color:var(--mut)}
 #doneBar{display:none;align-items:center;gap:8px;flex-wrap:wrap;border-color:var(--ok)}#doneBar b{color:var(--ok)}
+#autoBar{display:none;border-color:#a970ff}#autoBar .st{display:inline-block;padding:2px 8px;border-radius:10px;margin:2px 4px 2px 0;font-size:11px;border:1px solid var(--line);color:var(--mut)}
+#autoBar .st.running{border-color:#a970ff;color:var(--fg)}#autoBar .st.done{border-color:var(--ok);color:var(--ok)}#autoBar .st.failed,#autoBar .st.cancelled{border-color:var(--bad);color:var(--bad)}#autoBar .st.skipped{opacity:.6}
+#autoBar pre{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--mut);max-height:160px;overflow:auto;white-space:pre-wrap;margin:6px 0 0}
 #trainBar{display:none;border-color:var(--acc)}#trainBar .tb{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:6px 0}#trainBar .tb i{display:block;height:100%;background:var(--acc);width:0;transition:width .5s}
 #scoreDlg{max-width:980px;max-height:92vh;overflow:auto}.sc-t{width:100%;border-collapse:collapse;font-size:12px}.sc-t td,.sc-t th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left}.sc-t tr.sel{background:#4f8cff22}.sc-t tr{cursor:pointer}
 .sc-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-top:8px}.sc-g figure{margin:0;background:#05080d;border-radius:6px;overflow:hidden;position:relative}.sc-g img{width:100%;aspect-ratio:832/1216;object-fit:cover;display:block}.sc-g figcaption{font-size:11px;padding:3px 6px;color:var(--mut)}
@@ -63,6 +66,7 @@ small{color:var(--mut)}
   <select id="projSel" title="Project"></select>
   <button id="newProj">New project</button>
   <button id="cloneProj" title="Copy this project under a new name">Clone</button>
+  <button id="queueBtn" title="Autopilot on several projects, one after the other">Queue</button>
   <span id="engineDot"><span class="dot"></span><span id="engineTxt">engine</span></span>
   <button id="engineBtn">Launch engine</button>
   <button id="runBtn" class="primary">Run</button>
@@ -111,11 +115,21 @@ small{color:var(--mut)}
     <button id="saveBtn" class="primary" style="width:100%">Save settings</button>
     <small id="saveMsg"></small>
   </div>
+  <div class="box"><h2>Autopilot</h2>
+    <div class="row"><label style="min-width:0"><input type="checkbox" id="autoChk"> Run goes all the way to the LoRA</label></div>
+    <div class="row"><label>Train on</label><select id="autoPreset" style="flex:1"><option value="klein4b">FLUX.2 Klein 4B</option><option value="klein9b">FLUX.2 Klein 9B (gated)</option></select></div>
+    <div class="row"><label>Steps</label><input type="number" id="autoSteps" min="50" max="100000" step="50"></div>
+    <div class="row"><label>Score on</label><select id="autoEng" style="flex:1"></select></div>
+    <div class="row"><label></label><label style="min-width:0"><input type="checkbox" id="autoBest"> keep only the best save in that engine</label></div>
+    <small>Dataset, export, AI-Toolkit job, training (the engine is stopped to free the GPU), then the LoRA is copied into the scoring engine and scored with and without. Each step is checked; a problem stops the chain with its reason. Needs the AI-Toolkit folder in Settings.</small>
+  </div>
   <div class="box"><h2>Log</h2><div id="log"></div></div>
 </aside>
 <section class="grid">
   <div class="box" id="doneBar"><b id="doneTxt">Dataset complete</b><span style="flex:1"></span>
     <button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><button id="doneLora">Copy LoRA</button><button id="doneScore">Score LoRA</button><small id="doneHint"></small></div>
+  <div class="box" id="autoBar"><div class="row" style="margin:0"><b id="autoTxt"></b><span style="flex:1"></span><button id="autoLog">Log</button><button id="autoCancel" class="danger">Cancel</button><button id="autoCancelAll" class="danger">Cancel all</button><button id="autoHide">Hide</button></div>
+    <div id="autoSteps2"></div><small id="autoSub"></small><div id="autoHist"></div><pre id="autoTail" style="display:none"></pre></div>
   <div class="box" id="trainBar"><div class="row" style="margin:0"><b id="trainTxt"></b><span style="flex:1"></span><button id="trainLog">Log</button><button id="trainLora" class="primary">Copy LoRA</button><button id="trainScore">Score LoRA</button><button id="trainStop" class="danger">Stop training</button><button id="trainHide">Hide</button></div>
     <div class="tb"><i></i></div><small id="trainSub"></small><pre id="trainTail" style="display:none"></pre></div>
   <div class="cards" id="cards"></div></section>
@@ -181,21 +195,43 @@ small{color:var(--mut)}
 </dialog>
 <dialog id="scoreDlg">
   <h3>LoRA likeness</h3>
-  <p><small>Job <b id="scJob"></b>. Test renders in the engine (txt2img, same prompt and seed with and without the LoRA), each scored against this project's reference with the card scale (ArcFace cosine x 100). The LoRA is copied into the engine's folder first. The engine must run the checkpoint the LoRA was trained on.</small></p>
+  <p><small>Job <b id="scJob"></b>. Test renders in the engine (txt2img, same prompt and seed with and without the LoRA), each scored against this project's reference with the card scale (ArcFace cosine x 100). The LoRA is copied into the engine's folder first. The engine must run the checkpoint the LoRA was trained on: crispz-klein can be switched from here.</small></p>
   <div class="row"><label>LoRA files</label><div id="scFiles" style="flex:1;display:flex;flex-wrap:wrap;gap:4px 12px"></div></div>
   <div class="row"><label>Engine</label><select id="scEng"></select><label style="min-width:0">Weight</label><input type="number" id="scW" value="1" step="0.1" min="0" max="2" style="width:70px"><label style="min-width:0">Seed</label><input type="number" id="scSeed" value="42" style="width:90px"><label style="min-width:0"><input type="checkbox" id="scBase" checked> also without the LoRA</label></div>
+  <div class="row"><label></label><label style="min-width:0"><input type="checkbox" id="scSwitch" checked> switch the engine to the LoRA's Klein checkpoint if needed (it stays loaded)</label></div>
   <div class="row"><label>Test prompts</label><small>one per line, the trigger word (<span id="scTrig"></span>) is put in front</small></div>
   <textarea id="scPrompts" style="min-height:84px"></textarea>
   <div class="warn" id="scHint"></div>
-  <div class="row" style="margin-top:8px"><button id="scGo" class="primary">Score likeness</button><button id="scCancel" class="danger" style="display:none">Cancel</button><span id="scTxt" style="color:var(--mut)"></span></div>
+  <div class="row" style="margin-top:8px"><button id="scGo" class="primary">Score likeness</button><button id="scBest" title="The best scored save goes into the engine as <project>_<preset>_best; the other copies Dataset Studio made of this job are removed from it (ai-toolkit keeps every save)">Keep only the best</button><button id="scCancel" class="danger" style="display:none">Cancel</button><span id="scTxt" style="color:var(--mut)"></span></div>
   <table class="sc-t" id="scTable"></table>
   <div class="sc-g" id="scGrid"></div>
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('scoreDlg').close()">Close</button></div>
+</dialog>
+<dialog id="queueDlg">
+  <h3>Autopilot queue</h3>
+  <p><small>The ticked projects go from the dataset to a scored LoRA, one after the other, each with the settings of its own Autopilot box (model, steps, scoring engine). A project that fails is recorded with its reason and the next one starts. Needs the AI-Toolkit folder in Settings.</small></p>
+  <div id="queueList"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('queueDlg').close()">Close</button><button id="queueGo" class="primary">Start the queue</button></div>
+  <small id="queueMsg" class="err"></small>
 </dialog>
 <dialog id="zoom"><img alt=""><div class="row" style="justify-content:space-between;margin-top:8px"><span id="zoomInfo"></span><span><button id="zoomPrev" title="previous card (left arrow)">&lt; Prev</button> <button id="zoomNext" title="next card (right arrow)">Next &gt;</button> <button onclick="document.getElementById('zoom').close()">Close (Esc)</button></span></div></dialog>
 
 <script>
 const $=id=>document.getElementById(id);
+let AUTO={}, AUTO_HIDDEN=null, AUTO_HLEN=null;
+// ---------- notifications ----------
+// Asked on a click that starts something long (Autopilot, Queue, Launch training): the
+// browser only shows the permission prompt on a user gesture. 127.0.0.1 counts as a
+// secure origin, so it works without https. Denied or unsupported: nothing, the
+// panels still say it.
+function askNotify(){try{if(window.Notification&&Notification.permission==='default')Notification.requestPermission();}catch(e){}}
+function notify(title,body){try{if(window.Notification&&Notification.permission==='granted')new Notification(title,{body:body||'',tag:'crispz-ds-'+title});}catch(e){}}
+const BASE_TITLE=document.title;
+function tabTitle(){let t='';const a=AUTO||{};
+  if(a.running)t=`[${(STEP_LABEL[a.step]||a.step||'').replace(/^\d /,'')}${(a.queue||[]).length?' +'+a.queue.length:''}] `;
+  else if(TRAIN&&TRAIN.running){const pg=TRAIN.progress||{};t=pg.total?`[${Math.round(100*pg.step/pg.total)}%] `:'[training] ';}
+  else if(lastRunning)t='[rendering] ';
+  document.title=t+BASE_TITLE;}
 let P=null, CFG=null, ENGINES=[], POLL=null, lastRunning=false, AITK=null, JUST_LOT=null, TRAIN={active:false}, TRAIN_HIDDEN=null;
 async function api(op,data){const r=await fetch('/api/'+op,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})});return r.json();}
 function say(t,cls){$('status').textContent=t||'';$('status').className=cls||'';}
@@ -254,12 +290,14 @@ function fill(){const s=P.settings;fillRef();
   $('prompts').value=(s.prompts||[]).join('\n'); showSize(s.width,s.height,s.size_mode);
   showModel(s.model||'');$('subject').value=s.subject||'';$('fast').value=s.fast||'';$('copyChk').checked=s.copy_check!==false;$('artChk').checked=!!s.artifact_check;$('steps').value=s.steps??'';$('guidance').value=s.guidance??'';$('threshold').value=s.threshold;$('rerolls').value=s.max_rerolls;
   $('detail').value=s.detail_faces===null||s.detail_faces===undefined?'':(s.detail_faces?'1':'0');
-  $('capsrc').value=s.caption_source;$('trigger').value=s.trigger_word||'';$('expsize').value=String(s.export_size);$('expfmt').value=s.export_format;}
+  $('capsrc').value=s.caption_source;$('trigger').value=s.trigger_word||'';$('expsize').value=String(s.export_size);$('expfmt').value=s.export_format;
+  $('autoChk').checked=!!s.autopilot;$('autoPreset').value=s.auto_preset||'klein4b';$('autoSteps').value=s.auto_steps||1500;$('autoBest').checked=s.auto_keep_best!==false;fillAutoEng(s.auto_score===false?'':(s.auto_score_engine??'klein'));runLabel();}
 $('psSel').onchange=async()=>{if(!P)return;const r=await api('project_settings',{name:P.name,settings:{promptset:$('psSel').value}});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();};
 async function saveSettings(){if(!P)return;const d=$('detail').value;
   const settings={prompts:$('prompts').value,model:$('model').value,subject:$('subject').value,width:+$('w').value,height:+$('h').value,size_mode:$('sizeSel').value==='reference'?'reference':'fixed',fast:$('fast').value,copy_check:$('copyChk').checked,artifact_check:$('artChk').checked,steps:$('steps').value||null,guidance:$('guidance').value||null,
     threshold:+$('threshold').value,max_rerolls:+$('rerolls').value,detail_faces:d===''?null:d==='1',caption_source:$('capsrc').value,
-    trigger_word:$('trigger').value,export_size:+$('expsize').value,export_format:$('expfmt').value};
+    trigger_word:$('trigger').value,export_size:+$('expsize').value,export_format:$('expfmt').value,
+    autopilot:$('autoChk').checked,auto_preset:$('autoPreset').value,auto_steps:+$('autoSteps').value||1500,auto_score:!!$('autoEng').value,auto_score_engine:$('autoEng').value,auto_keep_best:$('autoBest').checked};
   const r=await api('project_settings',{name:P.name,settings,engine:$('engSel').value});
   if(!r.ok){$('saveMsg').textContent=r.error;say(r.error,'warn');return;}P=r.project;$('saveMsg').textContent='saved';setTimeout(()=>$('saveMsg').textContent='',1500);renderCards();projectLabel();}
 $('saveBtn').onclick=saveSettings;
@@ -304,18 +342,31 @@ $('engineBtn').onclick=async()=>{const e=ENGINES.find(x=>x.name===$('engSel').va
   refreshEngines();};
 
 // ---------- run ----------
-$('runBtn').onclick=async()=>{if(!P)return;const r=await api('run',{name:P.name,engine:$('engSel').value||undefined});
+function runLabel(){$('runBtn').textContent=$('autoChk').checked?'Run + LoRA':'Run';}
+function fillAutoEng(cur){const s=$('autoEng');s.innerHTML='<option value="">no score</option>';ENGINES.forEach(e=>{const o=document.createElement('option');o.value=e.name;o.textContent=e.name;s.appendChild(o);});
+  if(cur&&![...s.options].some(o=>o.value===cur)){const o=document.createElement('option');o.value=cur;o.textContent=cur+' (not configured)';s.appendChild(o);}s.value=cur||'';}
+$('autoChk').addEventListener('change',runLabel);
+$('runBtn').onclick=async()=>{if(!P)return;
+  if($('autoChk').checked){askNotify();if(!AITK||!AITK.root)return say('the autopilot needs the AI-Toolkit folder: set it in Settings','err');
+    const a=await api('autopilot_start',{name:P.name,engine:$('engSel').value||undefined});if(!a.ok)return say(a.error,'err');AUTO=a.autopilot;AUTO_HIDDEN=null;renderAuto();say('autopilot started');return poll();}
+  const r=await api('run',{name:P.name,engine:$('engSel').value||undefined});
   if(!r.ok)return say(r.error,'err');if(!r.started)return say(r.message,'warn');say(`run started: ${r.total} card(s)`);poll();};
 $('cancelBtn').onclick=()=>api('cancel');
 async function poll(){clearTimeout(POLL);const r=await api('status');const s=r.status||{};
   $('cancelBtn').disabled=!s.running;$('runBtn').disabled=!!s.running;
   $('bar').firstElementChild.style.width=s.total?Math.round(100*s.done/s.total)+'%':'0';
   if(s.text)say((s.running?'':'')+s.text,s.ok===false?'err':'');logLines(s.log);
-  const wasTraining=!!TRAIN.running;TRAIN=r.training||{active:false};if(wasTraining&&!TRAIN.running){renderDoneBar();say(`training ${TRAIN.job}: ${TRAIN.result}`+(TRAIN.lora?`, LoRA in ${TRAIN.lora}`:''),TRAIN.result==='done'?'':'warn');}
+  const wasTraining=!!TRAIN.running;TRAIN=r.training||{active:false};if(wasTraining&&!TRAIN.running){renderDoneBar();if(!AUTO.running)notify(`Training ${TRAIN.job}: ${TRAIN.result}`,TRAIN.lora||TRAIN.log||'');say(`training ${TRAIN.job}: ${TRAIN.result}`+(TRAIN.lora?`, LoRA in ${TRAIN.lora}`:''),TRAIN.result==='done'?'':'warn');}
   if(s.running||lastRunning){if(P&&s.project===P.name){const pr=await api('project_get',{name:P.name});if(pr.ok){P=pr.project;renderCards(s.current);fillRef();projectLabel();}}}
   const ended=!s.running&&lastRunning;lastRunning=!!s.running;
-  if(ended){refreshEngines();renderDoneBar();if(datasetComplete()&&s.project===P.name)say(AITK&&AITK.root?'dataset complete: export it, or create the AI-Toolkit job (green bar above the cards)':'dataset complete: export it (green bar above the cards)');}
-  renderTrain();POLL=setTimeout(poll,s.running?1500:(TRAIN.running?3000:6000));}
+  if(ended){refreshEngines();renderDoneBar();if(datasetComplete()&&s.project===P.name&&!AUTO.running)say(AITK&&AITK.root?'dataset complete: export it, or create the AI-Toolkit job (green bar above the cards)':'dataset complete: export it (green bar above the cards)');}
+  const wasAuto=!!AUTO.running;AUTO=r.autopilot||{};renderAuto();
+  const hl=(AUTO.history||[]).length;if(AUTO_HLEN!==null&&hl>AUTO_HLEN){const x=AUTO.history[hl-1];
+    notify(`Autopilot ${x.project}: ${x.ok?'done':'stopped'}`,x.ok?(x.result&&x.result.mean_lora!=null?`LoRA likeness ${x.result.mean_lora} (without ${x.result.mean_base})`:'LoRA trained'):(x.error||''));
+    if(!AUTO.running&&!(AUTO.queue||[]).length&&hl>1)notify('Autopilot queue finished',AUTO.history.map(y=>`${y.project}: ${y.ok?'done':'stopped'}`).join(', '));}
+  AUTO_HLEN=hl;
+  if(wasAuto&&!AUTO.running){refreshEngines();if(P)openProject(P.name);}
+  renderTrain();tabTitle();POLL=setTimeout(poll,AUTO.running?2500:s.running?1500:(TRAIN.running?3000:6000));}
 
 // ---------- cards ----------
 function badge(c){if(c.scored===false&&c.file)return `<span class="badge" title="unscored line: the face model cannot judge it">n/s ${c.score??''}</span>`;if(c.score===null||c.score===undefined)return '';const cls=c.score>=(P.settings.threshold||0)?'ok':(c.score>0?'low':'zero');return `<span class="badge ${cls}">${c.score}</span>`;}
@@ -338,7 +389,7 @@ function openAitk(){if(!P||!AITK||!AITK.root)return;const s=$('aitkPreset');s.in
   $('aitkOut').style.display='none';$('aitkMsg').textContent='';$('aitkGo').disabled=false;$('aitkDlg').showModal();}
 $('doneAitk').onclick=openAitk;
 // ---------- training ----------
-async function launchTrain(job){if(!P)return;say('starting the training...');
+async function launchTrain(job){if(!P)return;askNotify();say('starting the training...');
   let r=await api('aitk_train',{name:P.name,job});
   if(!r.ok&&r.engine_busy){if(!confirm(`The engine '${r.engine_busy}' started by Dataset Studio holds the GPU.\nStop it and start the training?`))return say('training not started','warn');
     r=await api('aitk_train',{name:P.name,job,stop_engine:true});refreshEngines();}
@@ -370,7 +421,7 @@ async function openScore(job){if(!P)return;const r=await api('lora_targets',{nam
   $('scFiles').innerHTML=r.loras.length?r.loras.map((l,i)=>`<label style="min-width:0"><input type="checkbox" value="${esc(l.file)}" ${i===0?'checked':''}> ${l.final?'final':'step '+l.step}</label>`).join(''):'<small>no LoRA yet: train the job first</small>';
   const e=$('scEng');e.innerHTML='';r.engines.forEach(x=>{const o=document.createElement('option');o.value=x.name;o.textContent=x.name;e.appendChild(o);});e.value=r.default_engine;
   if(!$('scPrompts').value.trim())$('scPrompts').value=r.default_prompts.join('\n');$('scHint').textContent=r.hint||'';
-  SC_SEL=null;renderScores(r.scores);$('scGo').disabled=!r.loras.length;$('scoreDlg').showModal();pollScore();}
+  SC_SEL=null;renderScores(r.scores);$('scGo').disabled=!r.loras.length;$('scBest').disabled=!(r.scores||[]).length;$('scoreDlg').showModal();pollScore();}
 function renderScores(list){list=(list||[]).slice().sort((a,b)=>(b.final-a.final)||((b.step||0)-(a.step||0)));
   if(!list.length){$('scTable').innerHTML='';$('scGrid').innerHTML='';return;}
   if(!SC_SEL||!list.some(h=>h.lora+'@'+h.weight===SC_SEL))SC_SEL=list[0].lora+'@'+list[0].weight;
@@ -380,20 +431,45 @@ function renderScores(list){list=(list||[]).slice().sort((a,b)=>(b.final-a.final
   $('scGrid').innerHTML=h.rows.map((r,i)=>fig(r.base,`${i+1} without`)+fig(r.lora,`${i+1} with LoRA`)).join('');}
 $('scTable').addEventListener('click',ev=>{const tr=ev.target.closest('tr[data-k]');if(!tr)return;SC_SEL=tr.dataset.k;renderScores(SC_T.scores);});
 $('scGrid').addEventListener('click',ev=>{if(ev.target.tagName==='IMG')window.open(ev.target.src,'_blank');});
-$('scGo').onclick=async()=>{const files=[...$('scFiles').querySelectorAll('input:checked')].map(x=>x.value);if(!files.length)return $('scTxt').textContent='pick at least one LoRA file';
-  $('scGo').disabled=true;const r=await api('lora_score',{name:P.name,job:SC_T.job,files,engine:$('scEng').value,weight:+$('scW').value||1,seed:+$('scSeed').value,baseline:$('scBase').checked,prompts:$('scPrompts').value});
+$('scGo').onclick=async()=>{askNotify();const files=[...$('scFiles').querySelectorAll('input:checked')].map(x=>x.value);if(!files.length)return $('scTxt').textContent='pick at least one LoRA file';
+  $('scGo').disabled=true;const r=await api('lora_score',{name:P.name,job:SC_T.job,files,engine:$('scEng').value,weight:+$('scW').value||1,seed:+$('scSeed').value,baseline:$('scBase').checked,switch_model:$('scSwitch').checked,prompts:$('scPrompts').value});
   if(!r.ok){$('scGo').disabled=false;$('scTxt').textContent=r.error;return;}pollScore();};
 $('scCancel').onclick=()=>api('lora_score_cancel');
+$('scBest').onclick=async()=>{const eng=$('scEng').value;if(!confirm(`Keep only the best scored save of ${SC_T.job} in ${eng}? The other copies Dataset Studio made there are removed (ai-toolkit keeps every save).`))return;
+  const r=await api('lora_keep_best',{name:P.name,job:SC_T.job,engine:eng});if(!r.ok){$('scTxt').textContent=r.error;return say(r.error,'err');}
+  const m=`${r.best} kept as ${r.file} (likeness ${r.mean_lora}${r.mean_base!=null?', without '+r.mean_base:''})`+(r.removed.length?`, removed: ${r.removed.join(', ')}`:'');
+  $('scTxt').textContent=m+(r.warning?' · '+r.warning:'');say(m,r.warning?'warn':'');};
 let SC_WAS=false;
 async function pollScore(){clearTimeout(SC_POLL);const r=await api('status');const s=r.lora_score||{};
   $('scCancel').style.display=s.running?'':'none';$('scGo').disabled=!!s.running||!(SC_T&&SC_T.loras.length);
   $('scTxt').textContent=s.running?`${s.done}/${s.total}: ${s.text}`:(s.ok?'done: '+s.text:(s.error?'stopped: '+s.error:''));
-  if(SC_T&&(s.running||SC_WAS)){const t=await api('lora_targets',{name:P.name,job:SC_T.job});if(t.ok){SC_T=t;renderScores(t.scores);}}
+  if(SC_T&&(s.running||SC_WAS)){const t=await api('lora_targets',{name:P.name,job:SC_T.job});if(t.ok){SC_T=t;renderScores(t.scores);$('scBest').disabled=!!s.running||!(t.scores||[]).length;}}
+  if(SC_WAS&&!s.running&&!AUTO.running)notify('LoRA score: '+(s.ok?'done':'stopped'),s.ok?s.text:(s.error||''));
   SC_WAS=!!s.running;if(s.running||$('scoreDlg').open)SC_POLL=setTimeout(pollScore,s.running?2000:5000);}
 $('doneScore').onclick=()=>openScore(P&&P.last_aitk?P.last_aitk.job:undefined);
 $('trainScore').onclick=()=>openScore(TRAIN.job);
 $('doneLora').onclick=()=>openLora(P&&P.last_aitk?P.last_aitk.job:undefined);
 $('trainLora').onclick=()=>openLora(TRAIN.job);
+// ---------- autopilot ----------
+const STEP_LABEL={dataset:'1 dataset',export:'2 export',job:'3 AI-Toolkit job',training:'4 training',score:'5 LoRA score'};
+function renderAuto(){const a=AUTO||{};const key=(a.project||'')+':'+(a.started||'');const show=!!a.project&&(a.running||AUTO_HIDDEN!==key);$('autoBar').style.display=show?'block':'none';
+  if(a.running){$('runBtn').disabled=true;}if(!show)return;
+  const q=a.queue||[],h=a.history||[];
+  $('autoTxt').textContent=(a.running?'Autopilot: ':(a.ok?'Autopilot finished: ':'Autopilot stopped: '))+a.project+(q.length||h.length>1?` (queue: ${h.length+(a.running?1:0)}/${h.length+q.length+(a.running?1:0)})`:'');
+  $('autoSteps2').innerHTML=Object.entries(a.steps||{}).map(([k,v])=>`<span class="st ${v}">${STEP_LABEL[k]||k}: ${v}</span>`).join('');
+  $('autoSub').textContent=(a.text||'')+(a.interrupted?` (cut at the ${a.interrupted} by a restart)`:'')+(q.length?` · next: ${q.map(x=>x[0]).join(', ')}`:'');
+  $('autoHist').innerHTML=h.length>1||(!a.running&&q.length===0&&h.length>1)?'<small>'+h.map(x=>`${esc(x.project)}: ${x.ok?'done'+(x.result&&x.result.mean_lora!=null?`, likeness ${x.result.mean_lora} (without ${x.result.mean_base})`:''):'stopped, '+esc(x.error||'')}`).join('<br>')+'</small>':'';
+  $('autoCancel').style.display=a.running?'':'none';$('autoCancelAll').style.display=a.running&&q.length?'':'none';$('autoHide').style.display=a.running?'none':'';
+  $('autoTail').textContent=(a.log||[]).join('\n');}
+$('autoCancel').onclick=async()=>{if(!confirm(`Cancel the autopilot on ${AUTO.project}? The step in flight stops (a training keeps its saves).`+((AUTO.queue||[]).length?' The queue goes on with the next project.':'')))return;await api('autopilot_cancel');poll();};
+$('autoCancelAll').onclick=async()=>{if(!confirm('Cancel the project in flight AND the rest of the queue?'))return;await api('autopilot_cancel',{all:true});poll();};
+$('autoHide').onclick=()=>{AUTO_HIDDEN=(AUTO.project||'')+':'+(AUTO.started||'');renderAuto();};
+$('autoLog').onclick=()=>{const t=$('autoTail');t.style.display=t.style.display==='none'?'':'none';t.scrollTop=1e9;};
+$('queueBtn').onclick=async()=>{const r=await api('projects');const l=$('queueList');
+  l.innerHTML=(r.projects||[]).map(p=>`<div class="row"><label style="min-width:0"><input type="checkbox" value="${esc(p.name)}" ${p.has_reference?'':'disabled'}> ${esc(p.name)}</label><small>${p.done}/${p.cards} card(s)${p.has_reference?'':', no reference photo'}</small></div>`).join('')||'<small>no project</small>';
+  $('queueMsg').textContent=AITK&&AITK.root?'':'set the AI-Toolkit folder in Settings first';$('queueDlg').showModal();};
+$('queueGo').onclick=async()=>{askNotify();const names=[...$('queueList').querySelectorAll('input:checked')].map(x=>x.value);if(!names.length)return $('queueMsg').textContent='tick at least one project';
+  const r=await api('autopilot_queue',{names});if(!r.ok){$('queueMsg').textContent=r.error;return;}$('queueDlg').close();AUTO=r.autopilot;AUTO_HIDDEN=null;renderAuto();say(`autopilot queue: ${names.length} project(s)`);poll();};
 $('trainLog').onclick=()=>{const t=$('trainTail');t.style.display=t.style.display==='none'?'':'none';t.scrollTop=1e9;};
 $('trainHide').onclick=()=>{TRAIN_HIDDEN=TRAIN.job+':'+TRAIN.started;renderTrain();};
 function renderTrain(){const t=TRAIN||{};const show=t.active&&(t.running||TRAIN_HIDDEN!==t.job+':'+t.started);$('trainBar').style.display=show?'block':'none';

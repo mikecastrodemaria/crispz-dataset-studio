@@ -43,7 +43,7 @@ PRESETS = {
                 "quantize": False, "note": "about 17 GB of VRAM, 0.8 s per step on a 5090"},
     "klein9b": {"label": "FLUX.2 Klein 9B (base, gated on HF)", "arch": "flux2_klein_9b",
                 "name_or_path": "black-forest-labs/FLUX.2-klein-base-9B",
-                "quantize": True,
+                "quantize": True, "gated": True,
                 "note": "about 24 GB of VRAM, 1.6 s per step; accept the licence on the "
                         "HF page with the account whose token is on this PC"},
 }
@@ -597,22 +597,184 @@ def _same_file(a, b):
                 return True
 
 
-def copy_lora(src, dst_dir):
-    """Copies src into dst_dir under its own name. The same file already there is
+def _st_header(path):
+    """(header length, header dict) of a safetensors file, or None when it is not one."""
+    import struct
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(8)
+            if len(raw) < 8:
+                return None
+            n = struct.unpack("<Q", raw)[0]
+            if not 2 <= n <= 100 * 1024 * 1024:
+                return None
+            h = json.loads(fh.read(n).decode("utf-8"))
+        return (n, h) if isinstance(h, dict) else None
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+
+
+def _same_tensors(a, b):
+    """The tensor data of two safetensors files is identical (headers may differ)."""
+    ha, hb = _st_header(a), _st_header(b)
+    if not ha or not hb:
+        return _same_file(a, b)
+    if os.path.getsize(a) - ha[0] != os.path.getsize(b) - hb[0]:
+        return False
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        fa.seek(8 + ha[0])
+        fb.seek(8 + hb[0])
+        while True:
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
+
+
+def _write_with_meta(src, dst, meta):
+    """src -> dst with `meta` merged into the header's __metadata__ (strings only).
+    The tensor offsets are relative to the data block, so a longer header moves
+    nothing; it is padded with spaces to 8 bytes, as the format recommends."""
+    import struct
+    n, h = _st_header(src)
+    md = dict(h.get("__metadata__") or {})
+    md.update({k: str(v) for k, v in meta.items() if v not in (None, "")})
+    h["__metadata__"] = md
+    hb = json.dumps(h, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    hb += b" " * (-len(hb) % 8)
+    with open(src, "rb") as fi, open(dst, "wb") as fo:
+        fi.seek(8 + n)
+        fo.write(struct.pack("<Q", len(hb)))
+        fo.write(hb)
+        shutil.copyfileobj(fi, fo, 1 << 20)
+
+
+def read_lora_meta(path):
+    h = _st_header(path)
+    return dict((h[1].get("__metadata__") or {})) if h else {}
+
+
+def copy_lora(src, dst_dir, meta=None):
+    """Copies src into dst_dir under its own name. The same LoRA already there is
     left as is; another file under that name is never overwritten (_2, _3).
-    Returns {path, file, copied: bool}."""
+    meta = extra header metadata for the COPY (ai-toolkit's file is untouched):
+    'trigger_words' is what crispz-klein shows as the LoRA's keywords
+    (cz_pipeline.lora_keywords); ai-toolkit writes none when the captions carry the
+    trigger word themselves. A file that is not a safetensors is copied as is.
+    Returns {path, file, copied: bool, meta: bool}."""
     if not src or not os.path.isfile(src):
         raise FileNotFoundError(f"LoRA not found: {src}")
     os.makedirs(dst_dir, exist_ok=True)
+    meta = {k: v for k, v in (meta or {}).items() if v not in (None, "")}
+    with_meta = bool(meta) and _st_header(src) is not None
+    if meta and not with_meta:
+        _log(f"LoRA {os.path.basename(src)} is not a safetensors file: copied without "
+             f"the trigger metadata")
     stem, ext = os.path.splitext(os.path.basename(src))
     dst, i = os.path.join(dst_dir, stem + ext), 2
     while os.path.exists(dst):
-        if _same_file(src, dst):
-            _log(f"LoRA {os.path.basename(dst)} already in {dst_dir} (same file)")
-            return {"path": dst, "file": os.path.basename(dst), "copied": False}
+        if (_same_tensors(src, dst) if with_meta else _same_file(src, dst)):
+            have = read_lora_meta(dst) if with_meta else {}
+            if with_meta and any(have.get(k) != str(v) for k, v in meta.items()):
+                _write_with_meta(dst, dst + ".tmp", meta)
+                os.replace(dst + ".tmp", dst)
+                _log(f"LoRA {os.path.basename(dst)} already in {dst_dir}: metadata updated "
+                     f"({', '.join(meta)})")
+            else:
+                _log(f"LoRA {os.path.basename(dst)} already in {dst_dir} (same file)")
+            return {"path": dst, "file": os.path.basename(dst), "copied": False,
+                    "meta": with_meta}
         dst = os.path.join(dst_dir, f"{stem}_{i}{ext}")
         i += 1
-    shutil.copy2(src, dst + ".tmp")
+    if with_meta:
+        _write_with_meta(src, dst + ".tmp", meta)
+    else:
+        shutil.copy2(src, dst + ".tmp")
     os.replace(dst + ".tmp", dst)
-    _log(f"LoRA copied: {src} -> {dst}")
-    return {"path": dst, "file": os.path.basename(dst), "copied": True}
+    _log(f"LoRA copied: {src} -> {dst}"
+         + (f" (metadata: {', '.join(f'{k}={v}' for k, v in meta.items())})" if with_meta else ""))
+    return {"path": dst, "file": os.path.basename(dst), "copied": True, "meta": with_meta}
+
+
+def lora_meta_for(project, job):
+    """The metadata the copy carries: the trigger word and where the LoRA comes from."""
+    trig = ((project or {}).get("settings") or {}).get("trigger_word") or ""
+    return {"trigger_words": trig.strip(),
+            "crispz_dataset_studio": json.dumps({"project": (project or {}).get("name"),
+                                                 "job": job})}
+
+
+# ----------------------------------------------------------------------------
+# Gated base repos: checked BEFORE anything is rendered or trained
+# ----------------------------------------------------------------------------
+# FLUX.2-klein-base-9B is gated. Without the licence accepted by the account whose
+# token is on this PC, ai-toolkit fails with a 403 only when it downloads the model:
+# after the dataset, the export and the job (an autopilot night lost). The repo's
+# metadata reads fine even without access, so only HfApi().auth_check is reliable
+# (report of 2026-10-31). It runs in ai-toolkit's own interpreter: huggingface_hub
+# is there, with the same token the training will use.
+_AUTH_PROBE = r"""
+import json, sys
+try:
+    from huggingface_hub import HfApi
+    HfApi().auth_check(sys.argv[1])
+    print(json.dumps({"ok": True}))
+except Exception as e:
+    print(json.dumps({"ok": False, "kind": type(e).__name__, "error": str(e)[:400]}))
+"""
+_AUTH_CACHE = {}
+_BLOCKING = ("GatedRepoError", "RepositoryNotFoundError", "HfHubHTTPError", "HTTPError")
+
+
+def gated_repo_of(preset=None, config_path=None):
+    """The gated base repo a preset or a job config trains on, else None."""
+    if preset in PRESETS:
+        return PRESETS[preset]["name_or_path"] if PRESETS[preset].get("gated") else None
+    try:
+        with open(config_path, encoding="utf-8") as fh:
+            m = re.search(r'^\s*name_or_path:\s*"?([^"\n]+)"?', fh.read(), re.M)
+    except (OSError, TypeError):
+        return None
+    repo = m.group(1).strip() if m else ""
+    return repo if any(p.get("gated") and p["name_or_path"] == repo for p in PRESETS.values()) else None
+
+
+def _auth_probe(py, repo, env, timeout=90):
+    try:
+        out = subprocess.run([py, "-c", _AUTH_PROBE, repo], env=env, capture_output=True,
+                             text=True, timeout=timeout).stdout.strip().splitlines()
+        return json.loads(out[-1]) if out else {"ok": False, "kind": "NoAnswer", "error": "no output"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "kind": "Timeout", "error": f"no answer in {timeout} s"}
+    except (OSError, ValueError) as e:
+        return {"ok": False, "kind": type(e).__name__, "error": str(e)}
+
+
+def check_hf_access(root, repo, max_age=600):
+    """{ok: True} when the token on this PC may download `repo`; {ok: False, error}
+    when Hugging Face refuses (blocking); {ok: None, warning} when the check itself
+    could not run (offline, no huggingface_hub): not blocking, said in the log."""
+    hit = _AUTH_CACHE.get(repo)
+    if hit and time.time() - hit < max_age:
+        return {"ok": True, "cached": True}
+    env = dict(os.environ)
+    tok = _hf_token()
+    if tok:
+        env["HF_TOKEN"] = tok
+    r = _auth_probe(python_for(root), repo, env)
+    if r.get("ok"):
+        _AUTH_CACHE[repo] = time.time()
+        _log(f"Hugging Face access to {repo}: granted")
+        return {"ok": True}
+    kind = r.get("kind") or ""
+    if kind in _BLOCKING or "401" in (r.get("error") or "") or "403" in (r.get("error") or ""):
+        msg = (f"no access to the gated repo {repo}"
+               + ("" if tok else " (no Hugging Face token found on this PC)")
+               + f": accept its licence on https://huggingface.co/{repo} with the account "
+                 f"whose token is on this PC, then try again")
+        _log(msg)
+        return {"ok": False, "error": msg}
+    w = f"could not check the access to {repo} ({kind}: {r.get('error')}): going on"
+    _log(w)
+    return {"ok": None, "warning": w}

@@ -60,12 +60,57 @@
     scored against the project's reference (ArcFace cosine x 100). Several saves of
     the job (final, 1250, 1000...) are scored in one go, the table compares their
     means and shows the renders side by side. A shot with no face (rear view) is not
-    scored. The engine must run the checkpoint the LoRA was trained on: the protocol's
-    txt2img does not switch the running model, so a 4B LoRA on a 9B engine (or a LoRA
-    the engine reports as skipped) stops the scoring with the reason instead of
-    scoring renders that ignored it. Renders and `scores.json` are kept in
+    scored. The engine must run the checkpoint the LoRA was trained on: crispz-klein
+    with the protocol's `switch_model` (its caps say `supports.switch_model`) is
+    switched to FLUX.2-klein-4B or 9B for the test, said in the log, and keeps that
+    model afterwards (box "switch the engine", on by default). With an older engine,
+    or the box unticked, a 4B LoRA on a 9B engine (or a LoRA the engine reports as
+    skipped) stops the scoring with the reason instead of scoring renders that
+    ignored it. Renders and `scores.json` are kept in
     `projects/<name>/lora_tests/<lora>/`, the means in `project.json`. One GPU job at
     a time: no scoring during a run or a training, and the reverse.
+
+### Autopilot and queue
+
+Tick "Run goes all the way to the LoRA" (Autopilot box) and Run becomes "Run + LoRA":
+the dataset is rendered, then exported, the AI-Toolkit job is created (model and steps
+of the box), the engine Dataset Studio started is stopped to free the GPU, the training
+runs, and the LoRA is copied into the scoring engine (klein by default, "no score" to
+stop at the training) and scored with and without: the final file and the two latest
+saves, the engine switched to the right Klein checkpoint when it can. Each step is
+checked before the next (a failed or unrendered card, fewer than 5 cards kept, a
+training that does not end "done", a LoRA the engine skips): the chain stops with its
+reason, shown in the violet panel and the log. Cancel stops the step in flight. If
+Dataset Studio is restarted during the training (which keeps going), the chain picks
+up there (`logs/autopilot.json`).
+
+Safeguards for a run nobody watches:
+- a gated base (FLUX.2-klein-base-9B) is checked with `HfApi().auth_check` in
+  ai-toolkit's own interpreter BEFORE the first card is rendered (Autopilot, Queue)
+  or the training starts: no access stops it at once with the fix (accept the
+  licence with the account whose token is on this PC); a check that cannot run
+  (offline) is said in the log and does not block;
+- the LoRA copied into an engine carries the project's trigger word in its
+  metadata (`trigger_words`, read by crispz-klein as the LoRA's keywords) and its
+  origin (`crispz_dataset_studio`); ai-toolkit's own file is left untouched;
+- a browser notification when a training, a LoRA score, an autopilot project or the
+  whole queue ends (allowed on the first click that starts one), and the tab title
+  shows the step in flight.
+
+Keep only the best (Autopilot box, on by default, or the button of the score
+dialog): after the score, the save with the best likeness (ties: the final, then the
+latest step) goes into the engine as `<project>_<preset>_best.safetensors`, with the
+trigger word in its metadata, and the other copies Dataset Studio made of that job
+are removed from the engine's folder. Only files Dataset Studio recorded as its own
+copies, with the tensors of a save of that job, are removed: a LoRA put there by hand
+is never touched, and ai-toolkit's output folder keeps every save. A newer job of the
+same project and preset replaces the `_best` file (said in the log). A best that beats
+"without the LoRA" by less than 5 points is reported as weak.
+
+"Queue" runs the autopilot on several projects, one after the other, each with the
+settings of its own Autopilot box: a night batch. A project that fails is recorded
+with its reason and the next one starts; "Cancel all" also empties the queue. The
+panel lists each project's outcome and LoRA likeness.
 
 "Clone" (header) copies the open project under a new name, with its renders and
 tries, or with the reference, settings and prompts only (every card pending): to try

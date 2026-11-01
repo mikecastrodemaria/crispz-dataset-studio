@@ -32,7 +32,9 @@ STATE = {"edits": 0, "faces": 0, "delay": 0.0, "gens": [],
          # txt2img (op gen) for the LoRA score: with a LoRA the render takes
          # lora_color (the "face" the LoRA learnt), without one it is grey; a
          # model / lora_skip make the engine report what the real one does
-         "lora_color": (10, 200, 30), "model": None, "lora_skip": False}
+         "lora_color": (10, 200, 30), "model": None, "lora_skip": False,
+         # crispz-klein's protocol switch_model (cli_gen may switch the model)
+         "can_switch": False}
 
 
 def _mean_color(img):
@@ -53,7 +55,8 @@ def caps():
     return {"ok": True, "protocol": 1, "tool": TOOL, "version": VERSION, "ops": ["caps", "gen", "upscale", "edit", "inpaint"],
             "supports": {"loras": True, "refs": True, "max_refs": 4, "seed": True, "negative": False,
                          "arbitrary_size": True, "faces": True, "detail_faces": True, "detail_hands": False,
-                         "edit": True, "edit_presets": [], "inpaint": True},
+                         "edit": True, "edit_presets": [], "inpaint": True,
+                         "switch_model": STATE.get("can_switch", False)},
             "model_loaded": STATE["model"] if STATE.get("model") else STATE["edits"] > 0, "models": [], "loras": [], "edit_loras": []}
 
 
@@ -105,6 +108,8 @@ def edit(spec_json):
 def gen(spec_json):
     spec = json.loads(spec_json)
     STATE["gens"].append(spec)
+    if spec.get("model") and spec.get("switch_model") and STATE.get("can_switch"):
+        STATE["model"] = spec["model"]
     loras = spec.get("loras") or []
     color = (128, 128, 128)
     warnings = []

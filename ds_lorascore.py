@@ -13,14 +13,17 @@ mean_base, scored, rows: [{prompt, seed, lora: {file, score}, base: {...}}], whe
 
 The engine's model must match the LoRA (a Klein 4B LoRA is skipped on the 9B, the
 engine says so). The protocol's gen op does not switch the running instance's model
-(cz_protocol: 'model override ignored on the remote route'), so the run checks the
-loaded model before the first render and after it, and stops with the reason instead
-of scoring renders that ignored the LoRA.
+unless asked with spec.switch_model (crispz-klein, supports.switch_model in its caps):
+when the engine runs the other variant, or nothing yet, the renders carry the right
+base repo and switch_model, the swap is announced, and the model stays loaded. With an
+older engine, or the switch refused, the run stops with the reason instead of scoring
+renders that ignored the LoRA (checked before the first render and after it).
 """
 
 import os
 import json
 import time
+import re
 import shutil
 import threading
 
@@ -38,6 +41,9 @@ DEFAULT_SEED = 42
 DEFAULT_SIZE = (832, 1216)
 # the checkpoint each ai-toolkit arch needs on the engine side
 ARCH_MODEL = {"flux2_klein_4b": "4B", "flux2_klein_9b": "9B"}
+# the distilled checkpoint the engine renders with, per variant (the report's tests)
+VARIANT_REPO = {"4B": "black-forest-labs/FLUX.2-klein-4B",
+                "9B": "black-forest-labs/FLUX.2-klein-9B"}
 
 _LOG_HOOK = None
 
@@ -102,7 +108,7 @@ class Scorer:
 
     def start(self, name, engines, engine_name, root, job, files, prompts=None,
               weight=1.0, baseline=True, seed=DEFAULT_SEED, size=DEFAULT_SIZE,
-              steps=None, loras_dir=None):
+              steps=None, loras_dir=None, switch_model=True):
         with self.lock:
             if self.state["running"]:
                 raise RuntimeError("a LoRA scoring is already running")
@@ -132,7 +138,7 @@ class Scorer:
                           "job": job, "started": time.time()}
             args = (p["name"], engines, engine_name, root, job,
                     [all_loras[f] for f in files], full, float(weight), bool(baseline),
-                    int(seed), size, steps, loras_dir)
+                    int(seed), size, steps, loras_dir, bool(switch_model))
             self.thread = threading.Thread(target=self._run, args=args, daemon=True,
                                            name="ds-lora-score")
             self.thread.start()
@@ -174,7 +180,7 @@ class Scorer:
         return ds_likeness.score(ref_emb, faces)
 
     def _run(self, name, engines, engine_name, root, job, loras, prompts, weight,
-             baseline, seed, size, steps, loras_dir):
+             baseline, seed, size, steps, loras_dir, switch_model=True):
         try:
             p = ds_project.load(name)
             self._say(f"engine: checking {engine_name or engines.default}")
@@ -185,9 +191,19 @@ class Scorer:
             if not (caps.get("supports") or {}).get("faces", True):
                 raise RuntimeError(f"{engine.name} has no face service: nothing to score with")
             arch = ds_aitoolkit.job_arch(root, job)
-            why = model_mismatch(arch, caps.get("model_loaded"))
-            if why:
-                raise RuntimeError(why)
+            loaded = _model_name(caps.get("model_loaded"))
+            why = model_mismatch(arch, loaded)
+            switch = None
+            need = ARCH_MODEL.get(arch or "")
+            can = bool((caps.get("supports") or {}).get("switch_model"))
+            if need and (why or not loaded) and switch_model and can:
+                switch = VARIANT_REPO[need]
+                self._say(f"engine on {loaded or 'no model yet'}: switching it to {switch} "
+                          f"for the LoRA (it stays loaded afterwards)")
+            elif why:
+                raise RuntimeError(why + ("" if can or not switch_model else
+                                          " (this engine cannot switch it from here: "
+                                          "update it for the protocol's switch_model)"))
             if not p.get("ref_embedding"):
                 w = ds_project.refresh_reference_embedding(p, engine)
                 ds_project.save(p)
@@ -202,6 +218,9 @@ class Scorer:
             spec0 = {"seed": seed, "width": int(size[0]), "height": int(size[1])}
             if steps:
                 spec0["steps"] = int(steps)
+            if switch:
+                # every render, base included: the comparison is on the same model
+                spec0["model"], spec0["switch_model"] = switch, True
             base_rows = None
             if baseline:
                 base_rows = []
@@ -223,7 +242,8 @@ class Scorer:
             for lo in loras:
                 if self.cancel_flag:
                     raise InterruptedError()
-                cp = ds_aitoolkit.copy_lora(lo["path"], dest)
+                cp = ds_aitoolkit.copy_lora(lo["path"], dest,
+                                            meta=ds_aitoolkit.lora_meta_for(p, job))
                 stem = os.path.splitext(cp["file"])[0]
                 tdir = os.path.join(pdir, "lora_tests", stem)
                 os.makedirs(tdir, exist_ok=True)
@@ -264,7 +284,8 @@ class Scorer:
                        "weight": weight, "seed": seed, "size": list(size),
                        "scored": len(both), "mean_lora": mean("lora"),
                        "mean_base": mean("base") if base_rows else None,
-                       "rows": rows, "when": time.strftime("%Y-%m-%d %H:%M:%S")}
+                       "rows": rows, "when": time.strftime("%Y-%m-%d %H:%M:%S"),
+                       "copy": cp["path"]}
                 with open(os.path.join(tdir, "scores.json"), "w", encoding="utf-8") as fh:
                     json.dump(res, fh, ensure_ascii=False, indent=1)
                 self.state["results"].append(res)
@@ -293,3 +314,85 @@ class Scorer:
 
 
 SCORER = Scorer()
+
+
+# ----------------------------------------------------------------------------
+# Keep only the best save in the engine
+# ----------------------------------------------------------------------------
+# After a score of several saves (final, 1250, 1000), the engine's LoRA folder holds
+# one copy of each. Only the best is useful there: it goes under a stable name,
+# <project>_<preset>_best.safetensors (the job name without its _vN), and the copies
+# Dataset Studio made of that job are removed. Every save stays in ai-toolkit's output
+# folder, so nothing is lost. A newer job of the same project and preset replaces the
+# _best file: that name always means "the best of the latest job", said in the log.
+# Only files Dataset Studio recorded as its own copies AND whose tensors are those of
+# a save of this job are removed: a LoRA the user put there by hand is never touched.
+MARGIN = 5          # a best that beats "without the LoRA" by less is reported as weak
+
+
+def pick_best(entries):
+    ok = [h for h in entries if h.get("mean_lora") is not None and h.get("scored")]
+    if not ok:
+        return None
+    return max(ok, key=lambda h: (h["mean_lora"], bool(h.get("final")), h.get("step") or 0))
+
+
+def best_name(job):
+    return re.sub(r"_v\d+$", "", job) + "_best.safetensors"
+
+
+def keep_best(name, root, job, loras_dir):
+    """Returns {best, path, removed, mean_lora, mean_base, warning?}."""
+    p = ds_project.load(name)
+    entries = [h for h in p.get("lora_scores") or [] if h.get("job") == job]
+    best = pick_best(entries)
+    if best is None:
+        raise ValueError(f"no scored LoRA for job '{job}': score it first")
+    saves = {l["file"]: l["path"] for l in ds_aitoolkit.job_loras(root, job)}
+    src = saves.get(best["lora"])
+    if not src:
+        raise FileNotFoundError(f"{best['lora']} is no longer in ai-toolkit's output folder")
+    os.makedirs(loras_dir, exist_ok=True)
+    dst = os.path.join(loras_dir, best_name(job))
+    replaced = os.path.exists(dst)
+    meta = dict(ds_aitoolkit.lora_meta_for(p, job),
+                crispz_best=json.dumps({"lora": best["lora"], "mean_lora": best["mean_lora"],
+                                        "mean_base": best.get("mean_base")}))
+    tmp = dst + ".tmp"
+    if ds_aitoolkit._st_header(src):
+        ds_aitoolkit._write_with_meta(src, tmp, meta)
+    else:
+        shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
+    # the copies Dataset Studio made of this job's saves, in that folder
+    la = p.get("last_aitk") or {}
+    candidates = {h.get("copy") or os.path.join(loras_dir, h["lora"]) for h in entries}
+    candidates |= {c.get("path") for c in la.get("copied") or [] if c.get("path")}
+    removed = []
+    here = os.path.normcase(os.path.abspath(loras_dir))
+    for c in sorted(x for x in candidates if x):
+        a = os.path.abspath(c)
+        if (os.path.normcase(os.path.dirname(a)) != here or os.path.normcase(a) == os.path.normcase(dst)
+                or not os.path.isfile(a)):
+            continue
+        if any(ds_aitoolkit._same_tensors(sp, a) for sp in saves.values()):
+            os.remove(a)
+            removed.append(os.path.basename(a))
+    la["copied"] = [c for c in la.get("copied") or [] if os.path.basename(c.get("path") or "") not in removed]
+    la["copied"] = [c for c in la["copied"] if c.get("path") != dst] + [
+        {"engine": "", "path": dst, "file": os.path.basename(dst), "best": best["lora"]}]
+    la["best"] = {"job": job, "lora": best["lora"], "path": dst, "mean_lora": best["mean_lora"],
+                  "mean_base": best.get("mean_base"), "when": time.strftime("%Y-%m-%d %H:%M:%S")}
+    p["last_aitk"] = la
+    ds_project.save(p)
+    out = {"best": best["lora"], "path": dst, "file": os.path.basename(dst), "removed": removed,
+           "mean_lora": best["mean_lora"], "mean_base": best.get("mean_base"),
+           "replaced": replaced}
+    _log(f"best of {job}: {best['lora']} (likeness {best['mean_lora']}) kept as {dst}"
+         + (" (replacing the previous _best)" if replaced else "")
+         + (f"; removed from {loras_dir}: {', '.join(removed)}" if removed else ""))
+    if best.get("mean_base") is not None and best["mean_lora"] < best["mean_base"] + MARGIN:
+        out["warning"] = (f"weak LoRA: {best['mean_lora']} with it against {best['mean_base']} "
+                          f"without; check the dataset or train longer")
+        _log(out["warning"])
+    return out

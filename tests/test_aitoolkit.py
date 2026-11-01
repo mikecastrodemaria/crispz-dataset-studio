@@ -2,6 +2,7 @@
 and the job (dataset copy + config), then both over HTTP."""
 
 import os
+import json
 import time
 
 import pytest
@@ -335,7 +336,7 @@ import ds_lorascore           # noqa: E402
 
 def _score_setup(studio, tmp_path):  # noqa: F811
     fake_engine.STATE.update({"gens": [], "model": None, "lora_skip": False,
-                              "lora_color": (10, 200, 30)})
+                              "lora_color": (10, 200, 30), "can_switch": False})
     root = fake_aitk(tmp_path / "tk")
     klein = tmp_path / "crispz-klein"
     klein.mkdir()
@@ -415,6 +416,11 @@ def test_lora_score_refuses_a_wrong_model_or_a_skipped_lora(studio, tmp_path, mo
     assert post(studio, "lora_score", {"name": "p", "engine": "fake"})["ok"]
     s = _wait_score()
     assert s["ok"] is False and "Klein 4B" in s["error"] and fake_engine.STATE["gens"] == []
+    assert "switch_model" in s["error"]           # an older engine: says how to fix it
+    # switch refused by the user: the same stop
+    post(studio, "lora_score", {"name": "p", "engine": "fake", "switch_model": False})
+    s = _wait_score()
+    assert s["ok"] is False and "Klein 4B" in s["error"] and "update it" not in s["error"]
     fake_engine.STATE.update({"model": None, "lora_skip": True})
     post(studio, "lora_score", {"name": "p", "engine": "fake", "baseline": False})
     s = _wait_score()
@@ -423,3 +429,269 @@ def test_lora_score_refuses_a_wrong_model_or_a_skipped_lora(studio, tmp_path, mo
     fake_engine.STATE.update({"lora_skip": False})
     r = post(studio, "lora_score", {"name": "p", "engine": "fake", "files": ["nope.safetensors"]})
     assert not r["ok"] and "not found" in r["error"]
+
+
+def test_lora_score_switches_a_klein_that_can(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_lorascore, "SCORER", ds_lorascore.Scorer())
+    root, klein, job = _score_setup(studio, tmp_path)
+    fake_engine.STATE.update({"model": "black-forest-labs/FLUX.2-klein-9B", "can_switch": True})
+    post(studio, "lora_score", {"name": "p", "engine": "fake", "prompts": "close-up"})
+    s = _wait_score()
+    assert s["ok"] is True, s
+    specs = fake_engine.STATE["gens"]
+    # every render, the base one included, asks for the 4B with switch_model
+    assert len(specs) == 2 and all(sp["model"] == "black-forest-labs/FLUX.2-klein-4B"
+                                   and sp["switch_model"] for sp in specs)
+    assert fake_engine.STATE["model"] == "black-forest-labs/FLUX.2-klein-4B"
+    h = post(studio, "lora_targets", {"name": "p"})["scores"][0]
+    assert h["model"] == "black-forest-labs/FLUX.2-klein-4B" and h["mean_lora"] >= 99
+    # already on the right model: nothing is asked
+    fake_engine.STATE["gens"] = []
+    post(studio, "lora_score", {"name": "p", "engine": "fake", "prompts": "close-up"})
+    assert _wait_score()["ok"]
+    assert all("model" not in sp for sp in fake_engine.STATE["gens"])
+    fake_engine.STATE.update({"model": None, "can_switch": False})
+
+
+# ------------------------------------------------------------------ autopilot
+import ds_autopilot           # noqa: E402
+
+
+def _auto_setup(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_lorascore, "SCORER", ds_lorascore.Scorer())
+    monkeypatch.setattr(ds_aitoolkit, "TRAINER", ds_aitoolkit.Trainer(str(tmp_path / "t.json")))
+    monkeypatch.setattr(ds_autopilot, "AUTOPILOT",
+                        ds_autopilot.Autopilot(str(tmp_path / "ap.json"), poll=0.05))
+    fake_engine.STATE.update({"gens": [], "model": None, "lora_skip": False,
+                              "lora_color": (10, 200, 30), "can_switch": False})
+    root = fake_aitk_trainable(tmp_path / "tk", mode="ok")
+    klein = tmp_path / "crispz-klein"
+    klein.mkdir()
+    cfg = post(studio, "config_get")["config"]
+    cfg["ai_toolkit_dir"] = str(root)
+    cfg["engines"]["fake"]["dir"] = str(klein)
+    post(studio, "config_set", {"config": cfg})
+    return root, klein
+
+
+def _new_auto_project(studio, name, prompts):  # noqa: F811
+    post(studio, "project_new", {"name": name})
+    r = post(studio, "project_settings", {"name": name, "settings": {
+        "prompts": prompts, "width": 32, "height": 32, "trigger_word": "tok",
+        "max_rerolls": 0, "autopilot": True, "auto_steps": 1500,
+        "auto_score_engine": "fake"}})
+    assert r["ok"] and r["project"]["settings"]["autopilot"] is True
+    assert post(studio, "set_reference", {"name": name, "data": data_url((10, 200, 30))})["ok"]
+
+
+def _wait_auto(secs=60):
+    ap = ds_autopilot.autopilot()
+    for _ in range(secs * 20):
+        st = ap.status()
+        if not st.get("running") and not st.get("queue"):
+            time.sleep(0.1)
+            st = ap.status()
+            if not st.get("running") and not st.get("queue"):
+                return st
+        time.sleep(0.05)
+    raise AssertionError(f"autopilot did not end: {ap.status().get('text')}")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake interpreter is a symlink")
+def test_autopilot_goes_from_the_reference_to_a_scored_lora(studio, tmp_path, monkeypatch):  # noqa: F811
+    root, klein = _auto_setup(studio, tmp_path, monkeypatch)
+    _new_auto_project(studio, "a", ["one", "two", "three", "four", "five"])
+    r = post(studio, "autopilot_start", {"name": "a"})
+    assert r["ok"], r
+    st = _wait_auto()
+    assert st["ok"] is True, st.get("log")
+    assert st["steps"] == {"dataset": "done", "export": "done", "job": "done",
+                           "training": "done", "score": "done"}
+    job = st["job"]
+    assert job == "a_klein4b_v1"
+    # only the best save stays in the engine, under its stable name
+    assert sorted(os.listdir(klein / "loras")) == ["a_klein4b_best.safetensors"]
+    assert st["result"]["lora"].endswith("a_klein4b_best.safetensors")
+    assert st["result"]["mean_lora"] >= 99 and st["result"]["mean_base"] < 99
+    p = ds_project.load("a")
+    assert p["last_aitk"]["job"] == job and p["lora_scores"]
+    assert post(studio, "status")["autopilot"]["project"] == "a"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake interpreter is a symlink")
+def test_autopilot_queue_goes_on_after_a_failed_project(studio, tmp_path, monkeypatch):  # noqa: F811
+    _auto_setup(studio, tmp_path, monkeypatch)
+    _new_auto_project(studio, "bad", ["one", "FAIL two", "three", "four", "five"])
+    _new_auto_project(studio, "good", ["one", "two", "three", "four", "five"])
+    post(studio, "project_new", {"name": "noref"})
+    r = post(studio, "autopilot_queue", {"names": ["bad", "noref"]})
+    assert not r["ok"] and "reference" in r["error"]
+    r = post(studio, "autopilot_queue", {"names": ["bad", "good"]})
+    assert r["ok"], r
+    st = _wait_auto()
+    h = {x["project"]: x for x in st["history"]}
+    assert h["bad"]["ok"] is False and "002" in h["bad"]["error"]
+    assert h["bad"]["steps"]["dataset"] == "failed" and h["bad"]["steps"]["training"] == "pending"
+    assert h["good"]["ok"] is True and h["good"]["steps"]["score"] == "done"
+    assert st["project"] == "good" and st["queue"] == []
+
+
+def test_autopilot_needs_the_ai_toolkit_folder(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_autopilot, "AUTOPILOT",
+                        ds_autopilot.Autopilot(str(tmp_path / "ap.json"), poll=0.05))
+    post(studio, "project_new", {"name": "x"})
+    post(studio, "set_reference", {"name": "x", "data": data_url()})
+    r = post(studio, "autopilot_start", {"name": "x"})
+    assert not r["ok"] and "AI-Toolkit" in r["error"]
+
+
+def test_autopilot_resumes_a_training_cut_by_a_restart(tmp_path):
+    path = str(tmp_path / "ap.json")
+    with open(path, "w") as fh:
+        json.dump({"running": True, "project": "p", "step": "training", "job": "j_v1",
+                   "steps": {"dataset": "done", "export": "done", "job": "done",
+                             "training": "running", "score": "pending"}}, fh)
+    ap = ds_autopilot.Autopilot(path)
+    st = ap.status()
+    assert st["running"] is False and st["interrupted"] == "training"
+
+
+# ------------------------------------------------------------------ gated check, LoRA metadata
+def _real_lora(path, meta=None):
+    """A real safetensors file, written by hand (no dependency): two float32 tensors."""
+    import struct
+    a = struct.pack("<4f", 1, 2, 3, 4)
+    b = struct.pack("<2f", 5, 6)
+    h = {"lora_A.weight": {"dtype": "F32", "shape": [2, 2], "data_offsets": [0, 16]},
+         "lora_B.weight": {"dtype": "F32", "shape": [2], "data_offsets": [16, 24]}}
+    if meta:
+        h["__metadata__"] = meta
+    hb = json.dumps(h).encode()
+    hb += b" " * (-len(hb) % 8)
+    with open(path, "wb") as fh:
+        fh.write(struct.pack("<Q", len(hb)) + hb + a + b)
+
+
+def test_copy_lora_writes_the_trigger_into_the_copy_only(tmp_path):
+    src = tmp_path / "out" / "j_v1.safetensors"
+    src.parent.mkdir()
+    _real_lora(src, {"name": "j_v1", "software": "ai-toolkit"})
+    before = src.read_bytes()
+    dst = tmp_path / "loras"
+    meta = {"trigger_words": "ohwx character", "crispz_dataset_studio": '{"project": "p"}'}
+    r = ds_aitoolkit.copy_lora(str(src), str(dst), meta=meta)
+    assert r["copied"] and r["meta"]
+    assert src.read_bytes() == before                          # ai-toolkit's file untouched
+    got = ds_aitoolkit.read_lora_meta(r["path"])
+    assert got["trigger_words"] == "ohwx character" and got["software"] == "ai-toolkit"
+    assert ds_aitoolkit._same_tensors(str(src), r["path"])
+    try:                                                        # the real loader agrees
+        from safetensors.numpy import load_file
+        t = load_file(r["path"])
+        assert t["lora_A.weight"].tolist() == [[1, 2], [3, 4]] and t["lora_B.weight"].tolist() == [5, 6]
+    except ImportError:
+        pass
+    # again: the same tensors, same metadata -> left as is, no _2
+    r2 = ds_aitoolkit.copy_lora(str(src), str(dst), meta=meta)
+    assert not r2["copied"] and r2["file"] == "j_v1.safetensors"
+    # a new trigger word: the copy is updated in place, still no _2
+    r3 = ds_aitoolkit.copy_lora(str(src), str(dst), meta=dict(meta, trigger_words="tok"))
+    assert not r3["copied"] and ds_aitoolkit.read_lora_meta(r3["path"])["trigger_words"] == "tok"
+    assert sorted(os.listdir(dst)) == ["j_v1.safetensors"]
+    # a retrained LoRA under the same name: _2, the first one kept
+    _real_lora(src)
+    with open(src, "r+b") as fh:
+        fh.seek(-4, 2)
+        fh.write(b"\x00\x00\x80\x3f")
+    r4 = ds_aitoolkit.copy_lora(str(src), str(dst), meta=meta)
+    assert r4["copied"] and r4["file"] == "j_v1_2.safetensors"
+
+
+def test_gated_check(tmp_path, monkeypatch):
+    root = fake_aitk(tmp_path)
+    repo = "black-forest-labs/FLUX.2-klein-base-9B"
+    monkeypatch.setattr(ds_aitoolkit, "_AUTH_CACHE", {})
+    answers = {"r": {"ok": False, "kind": "GatedRepoError", "error": "403 Client Error"}}
+    monkeypatch.setattr(ds_aitoolkit, "_auth_probe", lambda py, rp, env, timeout=90: answers["r"])
+    r = ds_aitoolkit.check_hf_access(str(root), repo)
+    assert r["ok"] is False and "accept its licence" in r["error"] and repo in r["error"]
+    answers["r"] = {"ok": False, "kind": "ImportError", "error": "no huggingface_hub"}
+    r = ds_aitoolkit.check_hf_access(str(root), repo)
+    assert r["ok"] is None and "going on" in r["warning"]
+    answers["r"] = {"ok": True}
+    assert ds_aitoolkit.check_hf_access(str(root), repo)["ok"] is True
+    answers["r"] = {"ok": False, "kind": "GatedRepoError", "error": "403"}
+    assert ds_aitoolkit.check_hf_access(str(root), repo).get("cached")      # 10 min cache
+    assert ds_aitoolkit.gated_repo_of("klein9b") == repo
+    assert ds_aitoolkit.gated_repo_of("klein4b") is None
+
+
+def test_autopilot_refuses_a_9b_queue_without_access(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_autopilot, "AUTOPILOT",
+                        ds_autopilot.Autopilot(str(tmp_path / "ap.json"), poll=0.05))
+    monkeypatch.setattr(ds_aitoolkit, "_AUTH_CACHE", {})
+    monkeypatch.setattr(ds_aitoolkit, "_auth_probe",
+                        lambda py, rp, env, timeout=90: {"ok": False, "kind": "GatedRepoError",
+                                                         "error": "403"})
+    root = fake_aitk(tmp_path / "tk")
+    cfg = post(studio, "config_get")["config"]
+    cfg["ai_toolkit_dir"] = str(root)
+    post(studio, "config_set", {"config": cfg})
+    post(studio, "project_new", {"name": "nine"})
+    post(studio, "project_settings", {"name": "nine", "settings": {"auto_preset": "klein9b"}})
+    post(studio, "set_reference", {"name": "nine", "data": data_url()})
+    r = post(studio, "autopilot_queue", {"names": ["nine"]})
+    assert not r["ok"] and "FLUX.2-klein-base-9B" in r["error"]
+    assert not ds_autopilot.autopilot().status().get("running")
+    p = ds_project.load("nine")                           # nothing rendered by the queue
+    assert all(c["status"] == "pending" for c in p["cards"])
+
+
+def test_keep_best_keeps_the_best_save_and_only_removes_our_copies(tmp_path, monkeypatch):
+    monkeypatch.setattr(ds_project, "PROJECTS_DIR", str(tmp_path / "projects"))
+    root = fake_aitk(tmp_path / "tk")
+    job = "p_klein4b_v1"
+    out = root / "output" / job
+    out.mkdir(parents=True)
+    saves = {}
+    for f, v in ((job + ".safetensors", 1.0), (job + "_000001250.safetensors", 2.0),
+                 (job + "_000001000.safetensors", 3.0)):
+        _real_lora(out / f)
+        with open(out / f, "r+b") as fh:            # distinct tensors per save
+            fh.seek(-4, 2)
+            fh.write(__import__("struct").pack("<f", v))
+        saves[f] = out / f
+    loras = tmp_path / "crispz-klein" / "loras"
+    p = ds_project.create("p")
+    p["settings"]["trigger_word"] = "tok"
+    copies = {f: ds_aitoolkit.copy_lora(str(sp), str(loras), meta=ds_aitoolkit.lora_meta_for(p, job))["path"]
+              for f, sp in saves.items()}
+    (loras / "my_style.safetensors").write_bytes(b"the user's own LoRA")
+    p["lora_scores"] = [
+        {"job": job, "lora": job + ".safetensors", "final": True, "step": None, "scored": 4,
+         "mean_lora": 58.0, "mean_base": 2.0, "copy": copies[job + ".safetensors"]},
+        {"job": job, "lora": job + "_000001250.safetensors", "final": False, "step": 1250,
+         "scored": 4, "mean_lora": 63.5, "mean_base": 2.0, "copy": copies[job + "_000001250.safetensors"]},
+        {"job": job, "lora": job + "_000001000.safetensors", "final": False, "step": 1000,
+         "scored": 0, "mean_lora": None, "mean_base": None, "copy": copies[job + "_000001000.safetensors"]}]
+    ds_project.save(p)
+    r = ds_lorascore.keep_best("p", str(root), job, str(loras))
+    assert r["best"] == job + "_000001250.safetensors" and r["file"] == "p_klein4b_best.safetensors"
+    assert sorted(os.listdir(loras)) == ["my_style.safetensors", "p_klein4b_best.safetensors"]
+    assert ds_aitoolkit._same_tensors(str(saves[job + "_000001250.safetensors"]), r["path"])
+    meta = ds_aitoolkit.read_lora_meta(r["path"])
+    assert meta["trigger_words"] == "tok" and "63.5" in meta["crispz_best"]
+    assert len(os.listdir(out)) == 3                          # ai-toolkit keeps every save
+    assert "warning" not in r and not r["replaced"]
+    la = ds_project.load("p")["last_aitk"]
+    assert la["best"]["lora"] == job + "_000001250.safetensors"
+    assert [c["file"] for c in la["copied"]] == ["p_klein4b_best.safetensors"]
+    # a weak LoRA is said; a second keep replaces the _best file
+    p = ds_project.load("p")
+    for h in p["lora_scores"]:
+        h["mean_base"] = 60.0
+    ds_project.save(p)
+    r = ds_lorascore.keep_best("p", str(root), job, str(loras))
+    assert r["replaced"] and "weak LoRA" in r["warning"]
+    with pytest.raises(ValueError):
+        ds_lorascore.keep_best("p", str(root), "other_v1", str(loras))
