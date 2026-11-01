@@ -509,7 +509,9 @@ def test_autopilot_goes_from_the_reference_to_a_scored_lora(studio, tmp_path, mo
                            "training": "done", "score": "done"}
     job = st["job"]
     assert job == "a_klein4b_v1"
-    assert os.path.isfile(klein / "loras" / (job + ".safetensors"))
+    # only the best save stays in the engine, under its stable name
+    assert sorted(os.listdir(klein / "loras")) == ["a_klein4b_best.safetensors"]
+    assert st["result"]["lora"].endswith("a_klein4b_best.safetensors")
     assert st["result"]["mean_lora"] >= 99 and st["result"]["mean_base"] < 99
     p = ds_project.load("a")
     assert p["last_aitk"]["job"] == job and p["lora_scores"]
@@ -643,3 +645,53 @@ def test_autopilot_refuses_a_9b_queue_without_access(studio, tmp_path, monkeypat
     assert not ds_autopilot.autopilot().status().get("running")
     p = ds_project.load("nine")                           # nothing rendered by the queue
     assert all(c["status"] == "pending" for c in p["cards"])
+
+
+def test_keep_best_keeps_the_best_save_and_only_removes_our_copies(tmp_path, monkeypatch):
+    monkeypatch.setattr(ds_project, "PROJECTS_DIR", str(tmp_path / "projects"))
+    root = fake_aitk(tmp_path / "tk")
+    job = "p_klein4b_v1"
+    out = root / "output" / job
+    out.mkdir(parents=True)
+    saves = {}
+    for f, v in ((job + ".safetensors", 1.0), (job + "_000001250.safetensors", 2.0),
+                 (job + "_000001000.safetensors", 3.0)):
+        _real_lora(out / f)
+        with open(out / f, "r+b") as fh:            # distinct tensors per save
+            fh.seek(-4, 2)
+            fh.write(__import__("struct").pack("<f", v))
+        saves[f] = out / f
+    loras = tmp_path / "crispz-klein" / "loras"
+    p = ds_project.create("p")
+    p["settings"]["trigger_word"] = "tok"
+    copies = {f: ds_aitoolkit.copy_lora(str(sp), str(loras), meta=ds_aitoolkit.lora_meta_for(p, job))["path"]
+              for f, sp in saves.items()}
+    (loras / "my_style.safetensors").write_bytes(b"the user's own LoRA")
+    p["lora_scores"] = [
+        {"job": job, "lora": job + ".safetensors", "final": True, "step": None, "scored": 4,
+         "mean_lora": 58.0, "mean_base": 2.0, "copy": copies[job + ".safetensors"]},
+        {"job": job, "lora": job + "_000001250.safetensors", "final": False, "step": 1250,
+         "scored": 4, "mean_lora": 63.5, "mean_base": 2.0, "copy": copies[job + "_000001250.safetensors"]},
+        {"job": job, "lora": job + "_000001000.safetensors", "final": False, "step": 1000,
+         "scored": 0, "mean_lora": None, "mean_base": None, "copy": copies[job + "_000001000.safetensors"]}]
+    ds_project.save(p)
+    r = ds_lorascore.keep_best("p", str(root), job, str(loras))
+    assert r["best"] == job + "_000001250.safetensors" and r["file"] == "p_klein4b_best.safetensors"
+    assert sorted(os.listdir(loras)) == ["my_style.safetensors", "p_klein4b_best.safetensors"]
+    assert ds_aitoolkit._same_tensors(str(saves[job + "_000001250.safetensors"]), r["path"])
+    meta = ds_aitoolkit.read_lora_meta(r["path"])
+    assert meta["trigger_words"] == "tok" and "63.5" in meta["crispz_best"]
+    assert len(os.listdir(out)) == 3                          # ai-toolkit keeps every save
+    assert "warning" not in r and not r["replaced"]
+    la = ds_project.load("p")["last_aitk"]
+    assert la["best"]["lora"] == job + "_000001250.safetensors"
+    assert [c["file"] for c in la["copied"]] == ["p_klein4b_best.safetensors"]
+    # a weak LoRA is said; a second keep replaces the _best file
+    p = ds_project.load("p")
+    for h in p["lora_scores"]:
+        h["mean_base"] = 60.0
+    ds_project.save(p)
+    r = ds_lorascore.keep_best("p", str(root), job, str(loras))
+    assert r["replaced"] and "weak LoRA" in r["warning"]
+    with pytest.raises(ValueError):
+        ds_lorascore.keep_best("p", str(root), "other_v1", str(loras))

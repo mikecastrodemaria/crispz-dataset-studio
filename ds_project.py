@@ -115,6 +115,8 @@ DEFAULT_SETTINGS = {
     # and the engine the LoRA is scored on ("" = no score).
     "autopilot": False, "auto_preset": "klein4b", "auto_steps": 1500,
     "auto_score": True, "auto_score_engine": "klein",
+    # after the score, only the best save stays in the engine, as <job base>_best
+    "auto_keep_best": True,
 }
 
 # A line the face model cannot judge (rear view, closed eyes, face hidden): the card
@@ -373,6 +375,7 @@ def update_settings(p, new):
         s["export_format"] = "png"
     s["autopilot"] = bool(s.get("autopilot"))
     s["auto_score"] = bool(s.get("auto_score", True))
+    s["auto_keep_best"] = bool(s.get("auto_keep_best", True))
     s["auto_score_engine"] = str(s.get("auto_score_engine") or "").strip()
     try:
         s["auto_steps"] = max(50, min(100000, int(s.get("auto_steps") or 1500)))

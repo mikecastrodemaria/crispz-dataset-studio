@@ -23,6 +23,7 @@ renders that ignored the LoRA (checked before the first render and after it).
 import os
 import json
 import time
+import re
 import shutil
 import threading
 
@@ -283,7 +284,8 @@ class Scorer:
                        "weight": weight, "seed": seed, "size": list(size),
                        "scored": len(both), "mean_lora": mean("lora"),
                        "mean_base": mean("base") if base_rows else None,
-                       "rows": rows, "when": time.strftime("%Y-%m-%d %H:%M:%S")}
+                       "rows": rows, "when": time.strftime("%Y-%m-%d %H:%M:%S"),
+                       "copy": cp["path"]}
                 with open(os.path.join(tdir, "scores.json"), "w", encoding="utf-8") as fh:
                     json.dump(res, fh, ensure_ascii=False, indent=1)
                 self.state["results"].append(res)
@@ -312,3 +314,85 @@ class Scorer:
 
 
 SCORER = Scorer()
+
+
+# ----------------------------------------------------------------------------
+# Keep only the best save in the engine
+# ----------------------------------------------------------------------------
+# After a score of several saves (final, 1250, 1000), the engine's LoRA folder holds
+# one copy of each. Only the best is useful there: it goes under a stable name,
+# <project>_<preset>_best.safetensors (the job name without its _vN), and the copies
+# Dataset Studio made of that job are removed. Every save stays in ai-toolkit's output
+# folder, so nothing is lost. A newer job of the same project and preset replaces the
+# _best file: that name always means "the best of the latest job", said in the log.
+# Only files Dataset Studio recorded as its own copies AND whose tensors are those of
+# a save of this job are removed: a LoRA the user put there by hand is never touched.
+MARGIN = 5          # a best that beats "without the LoRA" by less is reported as weak
+
+
+def pick_best(entries):
+    ok = [h for h in entries if h.get("mean_lora") is not None and h.get("scored")]
+    if not ok:
+        return None
+    return max(ok, key=lambda h: (h["mean_lora"], bool(h.get("final")), h.get("step") or 0))
+
+
+def best_name(job):
+    return re.sub(r"_v\d+$", "", job) + "_best.safetensors"
+
+
+def keep_best(name, root, job, loras_dir):
+    """Returns {best, path, removed, mean_lora, mean_base, warning?}."""
+    p = ds_project.load(name)
+    entries = [h for h in p.get("lora_scores") or [] if h.get("job") == job]
+    best = pick_best(entries)
+    if best is None:
+        raise ValueError(f"no scored LoRA for job '{job}': score it first")
+    saves = {l["file"]: l["path"] for l in ds_aitoolkit.job_loras(root, job)}
+    src = saves.get(best["lora"])
+    if not src:
+        raise FileNotFoundError(f"{best['lora']} is no longer in ai-toolkit's output folder")
+    os.makedirs(loras_dir, exist_ok=True)
+    dst = os.path.join(loras_dir, best_name(job))
+    replaced = os.path.exists(dst)
+    meta = dict(ds_aitoolkit.lora_meta_for(p, job),
+                crispz_best=json.dumps({"lora": best["lora"], "mean_lora": best["mean_lora"],
+                                        "mean_base": best.get("mean_base")}))
+    tmp = dst + ".tmp"
+    if ds_aitoolkit._st_header(src):
+        ds_aitoolkit._write_with_meta(src, tmp, meta)
+    else:
+        shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
+    # the copies Dataset Studio made of this job's saves, in that folder
+    la = p.get("last_aitk") or {}
+    candidates = {h.get("copy") or os.path.join(loras_dir, h["lora"]) for h in entries}
+    candidates |= {c.get("path") for c in la.get("copied") or [] if c.get("path")}
+    removed = []
+    here = os.path.normcase(os.path.abspath(loras_dir))
+    for c in sorted(x for x in candidates if x):
+        a = os.path.abspath(c)
+        if (os.path.normcase(os.path.dirname(a)) != here or os.path.normcase(a) == os.path.normcase(dst)
+                or not os.path.isfile(a)):
+            continue
+        if any(ds_aitoolkit._same_tensors(sp, a) for sp in saves.values()):
+            os.remove(a)
+            removed.append(os.path.basename(a))
+    la["copied"] = [c for c in la.get("copied") or [] if os.path.basename(c.get("path") or "") not in removed]
+    la["copied"] = [c for c in la["copied"] if c.get("path") != dst] + [
+        {"engine": "", "path": dst, "file": os.path.basename(dst), "best": best["lora"]}]
+    la["best"] = {"job": job, "lora": best["lora"], "path": dst, "mean_lora": best["mean_lora"],
+                  "mean_base": best.get("mean_base"), "when": time.strftime("%Y-%m-%d %H:%M:%S")}
+    p["last_aitk"] = la
+    ds_project.save(p)
+    out = {"best": best["lora"], "path": dst, "file": os.path.basename(dst), "removed": removed,
+           "mean_lora": best["mean_lora"], "mean_base": best.get("mean_base"),
+           "replaced": replaced}
+    _log(f"best of {job}: {best['lora']} (likeness {best['mean_lora']}) kept as {dst}"
+         + (" (replacing the previous _best)" if replaced else "")
+         + (f"; removed from {loras_dir}: {', '.join(removed)}" if removed else ""))
+    if best.get("mean_base") is not None and best["mean_lora"] < best["mean_base"] + MARGIN:
+        out["warning"] = (f"weak LoRA: {best['mean_lora']} with it against {best['mean_base']} "
+                          f"without; check the dataset or train longer")
+        _log(out["warning"])
+    return out

@@ -97,6 +97,16 @@ Safeguards for a run nobody watches:
   whole queue ends (allowed on the first click that starts one), and the tab title
   shows the step in flight.
 
+Keep only the best (Autopilot box, on by default, or the button of the score
+dialog): after the score, the save with the best likeness (ties: the final, then the
+latest step) goes into the engine as `<project>_<preset>_best.safetensors`, with the
+trigger word in its metadata, and the other copies Dataset Studio made of that job
+are removed from the engine's folder. Only files Dataset Studio recorded as its own
+copies, with the tensors of a save of that job, are removed: a LoRA put there by hand
+is never touched, and ai-toolkit's output folder keeps every save. A newer job of the
+same project and preset replaces the `_best` file (said in the log). A best that beats
+"without the LoRA" by less than 5 points is reported as weak.
+
 "Queue" runs the autopilot on several projects, one after the other, each with the
 settings of its own Autopilot box: a night batch. A project that fails is recorded
 with its reason and the next one starts; "Cancel all" also empties the queue. The

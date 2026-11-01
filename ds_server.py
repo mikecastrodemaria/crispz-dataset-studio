@@ -46,6 +46,8 @@ Ops:
                                         txt2img tests with / without the LoRA, scored
                                         against the reference (thread; see status)
   lora_score_cancel {}
+  lora_keep_best {name, job?, engine?}  only the best scored save stays in the engine,
+                                        as <project>_<preset>_best.safetensors
   autopilot_start {name}                Run + export + job + training + score, hands off
                                         (the project's auto_* settings)
   autopilot_queue {names: [...]}        the autopilot on several projects, one after
@@ -492,6 +494,18 @@ class Studio:
             switch_model=bool(data.get("switch_model", True)))
         return {"lora_score": st}
 
+    def op_lora_keep_best(self, data):
+        p = self._project(data)
+        root, job = self._job_of(p, data)
+        if ds_lorascore.SCORER.state["running"]:
+            raise RuntimeError("wait for the LoRA scoring to finish")
+        names = [e["name"] for e in self._lora_engines()]
+        eng = str(data.get("engine") or ("klein" if "klein" in names else "")).strip()
+        target = next((e for e in self._lora_engines() if e["name"] == eng), None)
+        if target is None:
+            raise ValueError(f"engine '{eng}' has no install folder in Settings")
+        return ds_lorascore.keep_best(p["name"], root, job, target["loras_dir"])
+
     def op_lora_score_cancel(self, data):
         return {"cancelled": ds_lorascore.SCORER.cancel()}
 
@@ -503,7 +517,8 @@ class Studio:
                 "preset": s.get("auto_preset") or "klein4b",
                 "steps": int(s.get("auto_steps") or 1500),
                 "score": bool(s.get("auto_score", True)),
-                "score_engine": s.get("auto_score_engine") or ""}
+                "score_engine": s.get("auto_score_engine") or "",
+                "keep_best": bool(s.get("auto_keep_best", True))}
 
     def _autopilot_guard(self):
         if not ds_aitoolkit.find_root(self.config.get("ai_toolkit_dir")):

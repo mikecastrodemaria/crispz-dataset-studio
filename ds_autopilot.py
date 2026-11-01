@@ -351,6 +351,18 @@ class Autopilot:
                              if final else "done")
                    + (f"; best: {best['lora']} ({best['mean_lora']})"
                       if best and final and best is not final else ""))
+        if o.get("keep_best", True) and best:
+            k = studio.op("lora_keep_best", {"name": name, "job": job, "engine": eng})
+            if not k.get("ok"):
+                raise RuntimeError(f"keeping the best save: {k.get('error')}")
+            self.state["result"] = dict(self.state.get("result") or {}, lora=k["path"],
+                                        kept=k["best"], mean_lora=k["mean_lora"],
+                                        mean_base=k["mean_base"])
+            self._say(f"score: {k['best']} kept in {eng} as {k['file']}"
+                      + (f", {len(k['removed'])} other copy(ies) removed" if k["removed"] else ""))
+            if k.get("warning"):
+                self._say(f"score: {k['warning']}")
+            self._save()
 
 
 AUTOPILOT = None
