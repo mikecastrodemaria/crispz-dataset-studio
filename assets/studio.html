@@ -53,6 +53,8 @@ dialog::backdrop{background:#000a}dialog h3{margin:0 0 10px}
 small{color:var(--mut)}
 #doneBar{display:none;align-items:center;gap:8px;flex-wrap:wrap;border-color:var(--ok)}#doneBar b{color:var(--ok)}
 #trainBar{display:none;border-color:var(--acc)}#trainBar .tb{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:6px 0}#trainBar .tb i{display:block;height:100%;background:var(--acc);width:0;transition:width .5s}
+#scoreDlg{max-width:980px;max-height:92vh;overflow:auto}.sc-t{width:100%;border-collapse:collapse;font-size:12px}.sc-t td,.sc-t th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left}.sc-t tr.sel{background:#4f8cff22}.sc-t tr{cursor:pointer}
+.sc-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-top:8px}.sc-g figure{margin:0;background:#05080d;border-radius:6px;overflow:hidden;position:relative}.sc-g img{width:100%;aspect-ratio:832/1216;object-fit:cover;display:block}.sc-g figcaption{font-size:11px;padding:3px 6px;color:var(--mut)}
 #trainBar pre{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--mut);max-height:160px;overflow:auto;white-space:pre-wrap;margin:6px 0 0}
 .cmd{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:11px}
 </style></head><body>
@@ -113,8 +115,8 @@ small{color:var(--mut)}
 </aside>
 <section class="grid">
   <div class="box" id="doneBar"><b id="doneTxt">Dataset complete</b><span style="flex:1"></span>
-    <button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><button id="doneLora">Copy LoRA</button><small id="doneHint"></small></div>
-  <div class="box" id="trainBar"><div class="row" style="margin:0"><b id="trainTxt"></b><span style="flex:1"></span><button id="trainLog">Log</button><button id="trainLora" class="primary">Copy LoRA</button><button id="trainStop" class="danger">Stop training</button><button id="trainHide">Hide</button></div>
+    <button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><button id="doneLora">Copy LoRA</button><button id="doneScore">Score LoRA</button><small id="doneHint"></small></div>
+  <div class="box" id="trainBar"><div class="row" style="margin:0"><b id="trainTxt"></b><span style="flex:1"></span><button id="trainLog">Log</button><button id="trainLora" class="primary">Copy LoRA</button><button id="trainScore">Score LoRA</button><button id="trainStop" class="danger">Stop training</button><button id="trainHide">Hide</button></div>
     <div class="tb"><i></i></div><small id="trainSub"></small><pre id="trainTail" style="display:none"></pre></div>
   <div class="cards" id="cards"></div></section>
 </main>
@@ -176,6 +178,19 @@ small{color:var(--mut)}
   <div id="loraDone" style="margin-top:6px"></div>
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('loraDlg').close()">Close</button><button id="loraGo" class="primary">Copy</button></div>
   <small id="loraMsg" class="err"></small>
+</dialog>
+<dialog id="scoreDlg">
+  <h3>LoRA likeness</h3>
+  <p><small>Job <b id="scJob"></b>. Test renders in the engine (txt2img, same prompt and seed with and without the LoRA), each scored against this project's reference with the card scale (ArcFace cosine x 100). The LoRA is copied into the engine's folder first. The engine must run the checkpoint the LoRA was trained on.</small></p>
+  <div class="row"><label>LoRA files</label><div id="scFiles" style="flex:1;display:flex;flex-wrap:wrap;gap:4px 12px"></div></div>
+  <div class="row"><label>Engine</label><select id="scEng"></select><label style="min-width:0">Weight</label><input type="number" id="scW" value="1" step="0.1" min="0" max="2" style="width:70px"><label style="min-width:0">Seed</label><input type="number" id="scSeed" value="42" style="width:90px"><label style="min-width:0"><input type="checkbox" id="scBase" checked> also without the LoRA</label></div>
+  <div class="row"><label>Test prompts</label><small>one per line, the trigger word (<span id="scTrig"></span>) is put in front</small></div>
+  <textarea id="scPrompts" style="min-height:84px"></textarea>
+  <div class="warn" id="scHint"></div>
+  <div class="row" style="margin-top:8px"><button id="scGo" class="primary">Score likeness</button><button id="scCancel" class="danger" style="display:none">Cancel</button><span id="scTxt" style="color:var(--mut)"></span></div>
+  <table class="sc-t" id="scTable"></table>
+  <div class="sc-g" id="scGrid"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('scoreDlg').close()">Close</button></div>
 </dialog>
 <dialog id="zoom"><img alt=""><div class="row" style="justify-content:space-between;margin-top:8px"><span id="zoomInfo"></span><span><button id="zoomPrev" title="previous card (left arrow)">&lt; Prev</button> <button id="zoomNext" title="next card (right arrow)">Next &gt;</button> <button onclick="document.getElementById('zoom').close()">Close (Esc)</button></span></div></dialog>
 
@@ -312,7 +327,7 @@ function datasetComplete(){if(!P||!P.cards.length)return false;const done=P.card
 function renderDoneBar(){const ok=datasetComplete()&&!lastRunning;$('doneBar').style.display=ok?'flex':'none';if(!ok)return;
   const done=P.cards.filter(c=>c.status==='done').length;$('doneTxt').textContent=`Dataset complete: ${done} card(s) kept`;
   const ready=AITK&&AITK.root;$('doneAitk').style.display=ready?'':'none';
-  $('doneTrain').style.display=ready&&P.last_aitk&&!TRAIN.running?'':'none';$('doneLora').style.display=ready&&P.last_aitk&&!TRAIN.running?'':'none';$('doneLora').textContent=loraLabel();$('doneTrain').title=P.last_aitk?'train job '+P.last_aitk.job:'';
+  $('doneTrain').style.display=ready&&P.last_aitk&&!TRAIN.running?'':'none';$('doneLora').style.display=ready&&P.last_aitk&&!TRAIN.running?'':'none';$('doneScore').style.display=$('doneLora').style.display;$('doneLora').textContent=loraLabel();$('doneTrain').title=P.last_aitk?'train job '+P.last_aitk.job:'';
   $('doneHint').textContent=ready?(P.last_aitk?`last job: ${P.last_aitk.job}`:''):(AITK&&AITK.error?AITK.error:'set the AI-Toolkit folder in Settings to create the training job from here');}
 async function refreshAitk(){const r=await api('aitk_status');AITK=r.ok?r.aitk:null;renderDoneBar();}
 function openAitk(){if(!P||!AITK||!AITK.root)return;const s=$('aitkPreset');s.innerHTML='';
@@ -348,6 +363,35 @@ async function openLora(job){if(!P)return;const r=await api('lora_targets',{name
 $('loraGo').onclick=async()=>{$('loraGo').disabled=true;const r=await api('lora_copy',{name:P.name,job:LORA_T.job,file:$('loraFile').value,engine:$('loraEng').value});$('loraGo').disabled=false;
   if(!r.ok){$('loraMsg').textContent=r.error;return say(r.error,'err');}$('loraMsg').textContent='';
   $('loraDone').innerHTML=`<div style="color:var(--ok)">${esc(r.message)}</div>`+(r.hint?`<div class="warn">${esc(r.hint)}</div>`:'');say(r.message);};
+// ---------- LoRA likeness ----------
+let SC_T=null,SC_SEL=null,SC_POLL=null;
+async function openScore(job){if(!P)return;const r=await api('lora_targets',{name:P.name,job});if(!r.ok)return say(r.error,'err');SC_T=r;
+  $('scJob').textContent=r.job;$('scTrig').textContent=r.trigger||'none';
+  $('scFiles').innerHTML=r.loras.length?r.loras.map((l,i)=>`<label style="min-width:0"><input type="checkbox" value="${esc(l.file)}" ${i===0?'checked':''}> ${l.final?'final':'step '+l.step}</label>`).join(''):'<small>no LoRA yet: train the job first</small>';
+  const e=$('scEng');e.innerHTML='';r.engines.forEach(x=>{const o=document.createElement('option');o.value=x.name;o.textContent=x.name;e.appendChild(o);});e.value=r.default_engine;
+  if(!$('scPrompts').value.trim())$('scPrompts').value=r.default_prompts.join('\n');$('scHint').textContent=r.hint||'';
+  SC_SEL=null;renderScores(r.scores);$('scGo').disabled=!r.loras.length;$('scoreDlg').showModal();pollScore();}
+function renderScores(list){list=(list||[]).slice().sort((a,b)=>(b.final-a.final)||((b.step||0)-(a.step||0)));
+  if(!list.length){$('scTable').innerHTML='';$('scGrid').innerHTML='';return;}
+  if(!SC_SEL||!list.some(h=>h.lora+'@'+h.weight===SC_SEL))SC_SEL=list[0].lora+'@'+list[0].weight;
+  const f=v=>v==null?'-':v;
+  $('scTable').innerHTML='<tr><th>LoRA</th><th>weight</th><th>with LoRA</th><th>without</th><th>shots</th><th>model</th><th>when</th></tr>'+list.map(h=>`<tr data-k="${esc(h.lora+'@'+h.weight)}" class="${h.lora+'@'+h.weight===SC_SEL?'sel':''}"><td>${esc(h.final?'final':'step '+h.step)}</td><td>${h.weight}</td><td><b>${f(h.mean_lora)}</b></td><td>${f(h.mean_base)}</td><td>${h.scored}/${h.rows.length}</td><td>${esc(h.model)}</td><td>${esc(h.when)}</td></tr>`).join('');
+  const h=list.find(x=>x.lora+'@'+x.weight===SC_SEL);const fig=(o,lab)=>o?`<figure><img src="/file/${P.name}/${o.file}?t=${encodeURIComponent(h.when)}"><figcaption>${lab}: ${o.score==null?'no face':o.score}</figcaption></figure>`:'';
+  $('scGrid').innerHTML=h.rows.map((r,i)=>fig(r.base,`${i+1} without`)+fig(r.lora,`${i+1} with LoRA`)).join('');}
+$('scTable').addEventListener('click',ev=>{const tr=ev.target.closest('tr[data-k]');if(!tr)return;SC_SEL=tr.dataset.k;renderScores(SC_T.scores);});
+$('scGrid').addEventListener('click',ev=>{if(ev.target.tagName==='IMG')window.open(ev.target.src,'_blank');});
+$('scGo').onclick=async()=>{const files=[...$('scFiles').querySelectorAll('input:checked')].map(x=>x.value);if(!files.length)return $('scTxt').textContent='pick at least one LoRA file';
+  $('scGo').disabled=true;const r=await api('lora_score',{name:P.name,job:SC_T.job,files,engine:$('scEng').value,weight:+$('scW').value||1,seed:+$('scSeed').value,baseline:$('scBase').checked,prompts:$('scPrompts').value});
+  if(!r.ok){$('scGo').disabled=false;$('scTxt').textContent=r.error;return;}pollScore();};
+$('scCancel').onclick=()=>api('lora_score_cancel');
+let SC_WAS=false;
+async function pollScore(){clearTimeout(SC_POLL);const r=await api('status');const s=r.lora_score||{};
+  $('scCancel').style.display=s.running?'':'none';$('scGo').disabled=!!s.running||!(SC_T&&SC_T.loras.length);
+  $('scTxt').textContent=s.running?`${s.done}/${s.total}: ${s.text}`:(s.ok?'done: '+s.text:(s.error?'stopped: '+s.error:''));
+  if(SC_T&&(s.running||SC_WAS)){const t=await api('lora_targets',{name:P.name,job:SC_T.job});if(t.ok){SC_T=t;renderScores(t.scores);}}
+  SC_WAS=!!s.running;if(s.running||$('scoreDlg').open)SC_POLL=setTimeout(pollScore,s.running?2000:5000);}
+$('doneScore').onclick=()=>openScore(P&&P.last_aitk?P.last_aitk.job:undefined);
+$('trainScore').onclick=()=>openScore(TRAIN.job);
 $('doneLora').onclick=()=>openLora(P&&P.last_aitk?P.last_aitk.job:undefined);
 $('trainLora').onclick=()=>openLora(TRAIN.job);
 $('trainLog').onclick=()=>{const t=$('trainTail');t.style.display=t.style.display==='none'?'':'none';t.scrollTop=1e9;};
@@ -355,7 +399,7 @@ $('trainHide').onclick=()=>{TRAIN_HIDDEN=TRAIN.job+':'+TRAIN.started;renderTrain
 function renderTrain(){const t=TRAIN||{};const show=t.active&&(t.running||TRAIN_HIDDEN!==t.job+':'+t.started);$('trainBar').style.display=show?'block':'none';
   $('runBtn').disabled=!!t.running||lastRunning;if(!show)return;
   const pg=t.progress||{};const pct=pg.total?Math.round(100*pg.step/pg.total):0;$('trainBar').querySelector('.tb i').style.width=(t.running?pct:(t.result==='done'?100:pct))+'%';
-  $('trainStop').style.display=t.running?'':'none';$('trainLora').style.display=!t.running&&t.result==='done'&&P&&t.project===P.name?'':'none';$('trainLora').textContent=loraLabel();$('trainHide').style.display=t.running?'none':'';
+  $('trainStop').style.display=t.running?'':'none';$('trainLora').style.display=!t.running&&t.result==='done'&&P&&t.project===P.name?'':'none';$('trainScore').style.display=$('trainLora').style.display;$('trainLora').textContent=loraLabel();$('trainHide').style.display=t.running?'none':'';
   $('trainTxt').textContent=t.running?`Training ${t.job}: `+(pg.total?`step ${pg.step}/${pg.total} (${pct}%)`:'loading the model and caching latents...'):
     (t.result==='done'?`Training ${t.job} done`:t.result==='stopped'?`Training ${t.job} stopped`:`Training ${t.job} failed`+(t.returncode!=null?` (exit ${t.returncode})`:''));
   const bits=[];if(pg.loss)bits.push('loss '+pg.loss);if(pg.elapsed)bits.push('elapsed '+pg.elapsed);if(t.running&&pg.eta)bits.push('left '+pg.eta);bits.push(t.minutes+' min total');

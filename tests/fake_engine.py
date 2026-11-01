@@ -28,7 +28,11 @@ TOOL = "fake-klein"
 VERSION = "0.0.1"
 _EVENTS = {}
 _LOCK = threading.Lock()
-STATE = {"edits": 0, "faces": 0, "delay": 0.0}
+STATE = {"edits": 0, "faces": 0, "delay": 0.0, "gens": [],
+         # txt2img (op gen) for the LoRA score: with a LoRA the render takes
+         # lora_color (the "face" the LoRA learnt), without one it is grey; a
+         # model / lora_skip make the engine report what the real one does
+         "lora_color": (10, 200, 30), "model": None, "lora_skip": False}
 
 
 def _mean_color(img):
@@ -50,7 +54,7 @@ def caps():
             "supports": {"loras": True, "refs": True, "max_refs": 4, "seed": True, "negative": False,
                          "arbitrary_size": True, "faces": True, "detail_faces": True, "detail_hands": False,
                          "edit": True, "edit_presets": [], "inpaint": True},
-            "model_loaded": STATE["edits"] > 0, "models": [], "loras": [], "edit_loras": []}
+            "model_loaded": STATE["model"] if STATE.get("model") else STATE["edits"] > 0, "models": [], "loras": [], "edit_loras": []}
 
 
 def edit(spec_json):
@@ -98,6 +102,27 @@ def edit(spec_json):
             "warnings": ["'guidance' has no effect on klein"] if spec.get("guidance") is not None else []}
 
 
+def gen(spec_json):
+    spec = json.loads(spec_json)
+    STATE["gens"].append(spec)
+    loras = spec.get("loras") or []
+    color = (128, 128, 128)
+    warnings = []
+    if loras and STATE.get("lora_skip"):
+        warnings.append(f"LoRA {loras[0]} skipped: hidden sizes 3072 vs 4096")
+    elif loras:
+        w = float(str(loras[0]).rpartition(":")[2] or 1)
+        color = tuple(int(128 + (c - 128) * min(1.0, w)) for c in STATE["lora_color"])
+    seed = int(spec.get("seed", 0))
+    w, h = max(8, min(int(spec.get("width") or 64), 64)), max(8, min(int(spec.get("height") or 64), 64))
+    out_dir = spec.get("out_dir") or "."
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"czp_gen_{seed}_{len(STATE['gens'])}.png")
+    Image.new("RGB", (w, h), color).save(path, "PNG")
+    return {"ok": True, "protocol": 1, "tool": TOOL, "route": "remote", "images": [os.path.abspath(path)],
+            "seed_used": seed, "loras": loras, "warnings": warnings}
+
+
 def faces(b64):
     STATE["faces"] += 1
     img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
@@ -110,7 +135,7 @@ def faces(b64):
 
 ENDPOINTS = {"cli_caps": lambda data: caps(),
              "cli_edit": lambda data: edit(data[0]),
-             "cli_gen": lambda data: edit(data[0]),
+             "cli_gen": lambda data: gen(data[0]),
              "cli_faces": lambda data: faces(data[0])}
 
 

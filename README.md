@@ -54,6 +54,18 @@
    `loras_dir` in Dataset Studio's config wins). Never overwritten: the same file is
    left as is, another one under that name gets `_2`. The dialog reminds which
    checkpoint to pick (a 4B LoRA is skipped on Klein 9B, and the reverse).
+10. "Score LoRA" measures the trained LoRA with the card scale: test renders in the
+    engine (txt2img, four prompts by default, editable, the trigger word in front,
+    seed 42, 832x1216), each with the LoRA and, same prompt and seed, without it,
+    scored against the project's reference (ArcFace cosine x 100). Several saves of
+    the job (final, 1250, 1000...) are scored in one go, the table compares their
+    means and shows the renders side by side. A shot with no face (rear view) is not
+    scored. The engine must run the checkpoint the LoRA was trained on: the protocol's
+    txt2img does not switch the running model, so a 4B LoRA on a 9B engine (or a LoRA
+    the engine reports as skipped) stops the scoring with the reason instead of
+    scoring renders that ignored it. Renders and `scores.json` are kept in
+    `projects/<name>/lora_tests/<lora>/`, the means in `project.json`. One GPU job at
+    a time: no scoring during a run or a training, and the reverse.
 
 "Clone" (header) copies the open project under a new name, with its renders and
 tries, or with the reference, settings and prompts only (every card pending): to try

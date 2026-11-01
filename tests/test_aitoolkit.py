@@ -326,3 +326,100 @@ def test_lora_copy_over_http(studio, tmp_path):  # noqa: F811
     r = post(studio, "lora_copy", {"name": "p", "engine": "fake"})       # no dir
     assert not r["ok"] and "install folder" in r["error"]
     assert post(studio, "lora_targets", {"name": "p"})["copied"][0]["engine"] == "klein"
+
+
+# ------------------------------------------------------------------ LoRA likeness
+import fake_engine            # noqa: E402
+import ds_lorascore           # noqa: E402
+
+
+def _score_setup(studio, tmp_path):  # noqa: F811
+    fake_engine.STATE.update({"gens": [], "model": None, "lora_skip": False,
+                              "lora_color": (10, 200, 30)})
+    root = fake_aitk(tmp_path / "tk")
+    klein = tmp_path / "crispz-klein"
+    klein.mkdir()
+    cfg = post(studio, "config_get")["config"]
+    cfg["ai_toolkit_dir"] = str(root)
+    cfg["engines"]["fake"]["dir"] = str(klein)
+    post(studio, "config_set", {"config": cfg})
+    post(studio, "project_new", {"name": "p"})
+    post(studio, "project_settings", {"name": "p", "settings": {"trigger_word": "ohwx character"}})
+    assert post(studio, "set_reference", {"name": "p", "data": data_url((10, 200, 30))})["ok"]
+    p = ds_project.load("p")
+    job = ds_aitoolkit.create_job(p, str(make_lot(tmp_path / "lot")), cfg, preset="klein4b")["job"]
+    p = ds_project.load("p")
+    p["last_aitk"] = {"job": job}
+    ds_project.save(p)
+    out = root / "output" / job
+    out.mkdir(parents=True)
+    (out / (job + ".safetensors")).write_bytes(b"final")
+    (out / (job + "_000001000.safetensors")).write_bytes(b"step1000")
+    return root, klein, job
+
+
+def _wait_score():
+    for _ in range(200):
+        s = ds_lorascore.SCORER.status()
+        if not s["running"]:
+            return s
+        time.sleep(0.05)
+    raise AssertionError("scoring did not end")
+
+
+def test_model_mismatch_reasons():
+    assert ds_lorascore.model_mismatch("flux2_klein_4b", "black-forest-labs/FLUX.2-klein-9B")
+    assert ds_lorascore.model_mismatch("flux2_klein_9b", "black-forest-labs/FLUX.2-klein-4B")
+    assert ds_lorascore.model_mismatch("flux2_klein_4b", "black-forest-labs/FLUX.2-klein-4B") is None
+    assert ds_lorascore.model_mismatch("flux2_klein_4b", "") is None
+    assert ds_lorascore.model_mismatch("", "black-forest-labs/FLUX.2-klein-9B") is None
+
+
+def test_lora_score_over_http(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_lorascore, "SCORER", ds_lorascore.Scorer())
+    root, klein, job = _score_setup(studio, tmp_path)
+    t = post(studio, "lora_targets", {"name": "p"})
+    assert t["default_prompts"] == ds_lorascore.DEFAULT_PROMPTS and t["scores"] == []
+    r = post(studio, "lora_score", {"name": "p", "engine": "fake",
+                                    "files": [job + ".safetensors", job + "_000001000.safetensors"],
+                                    "prompts": "close-up portrait\nmedium shot", "weight": 1})
+    assert r["ok"] and r["lora_score"]["total"] == 2 * 2 + 2
+    s = _wait_score()
+    assert s["ok"] is True, s
+    # same seed and size with and without; the trigger word in front; the LoRA by name
+    specs = fake_engine.STATE["gens"]
+    assert len(specs) == 6 and {sp["seed"] for sp in specs} == {42}
+    assert specs[0]["prompt"] == "ohwx character, close-up portrait" and specs[0]["loras"] == []
+    assert specs[2]["loras"] == [job + ".safetensors:1"]
+    assert os.path.isfile(klein / "loras" / (job + ".safetensors"))
+    assert os.path.isfile(klein / "loras" / (job + "_000001000.safetensors"))
+    t = post(studio, "lora_targets", {"name": "p"})
+    assert len(t["scores"]) == 2
+    final = next(h for h in t["scores"] if h["final"])
+    assert final["mean_lora"] >= 99 and final["mean_base"] < final["mean_lora"]
+    assert final["scored"] == 2 and final["rows"][0]["base"]["score"] is not None
+    assert os.path.isfile(os.path.join(ds_project.project_dir("p"), final["rows"][0]["lora"]["file"]))
+    # scoring again replaces the entry of that LoRA and weight, keeps the others
+    post(studio, "lora_score", {"name": "p", "engine": "fake", "files": [job + ".safetensors"],
+                                "baseline": False, "prompts": "close-up portrait"})
+    assert _wait_score()["ok"]
+    t = post(studio, "lora_targets", {"name": "p"})
+    assert len(t["scores"]) == 2
+    assert next(h for h in t["scores"] if h["final"])["mean_base"] is None
+
+
+def test_lora_score_refuses_a_wrong_model_or_a_skipped_lora(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_lorascore, "SCORER", ds_lorascore.Scorer())
+    root, klein, job = _score_setup(studio, tmp_path)
+    fake_engine.STATE["model"] = "black-forest-labs/FLUX.2-klein-9B"
+    assert post(studio, "lora_score", {"name": "p", "engine": "fake"})["ok"]
+    s = _wait_score()
+    assert s["ok"] is False and "Klein 4B" in s["error"] and fake_engine.STATE["gens"] == []
+    fake_engine.STATE.update({"model": None, "lora_skip": True})
+    post(studio, "lora_score", {"name": "p", "engine": "fake", "baseline": False})
+    s = _wait_score()
+    assert s["ok"] is False and "did not apply the LoRA" in s["error"]
+    assert ds_project.load("p").get("lora_scores") in (None, [])
+    fake_engine.STATE.update({"lora_skip": False})
+    r = post(studio, "lora_score", {"name": "p", "engine": "fake", "files": ["nope.safetensors"]})
+    assert not r["ok"] and "not found" in r["error"]

@@ -41,7 +41,11 @@ Ops:
   aitk_train_stop {}                    stop the training (whole process tree)
   lora_targets {name, job?}             the job's LoRA files + the engines' LoRA folders
   lora_copy {name, job?, file?, engine?} copy a LoRA of the job into an engine's folder
-  status {} also carries 'training' (job, progress, log tail, result)
+  lora_score {name, job?, files?, engine?, prompts?, weight?, baseline?, seed?}
+                                        txt2img tests with / without the LoRA, scored
+                                        against the reference (thread; see status)
+  lora_score_cancel {}
+  status {} also carries 'training' and 'lora_score' (job, progress, log tail, result)
 """
 
 import os
@@ -60,6 +64,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ds_engines
 import ds_project
 import ds_aitoolkit
+import ds_lorascore
 import ds_captions
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -80,6 +85,7 @@ def log(msg):
 ds_engines.set_log_hook(log)
 ds_project.set_log_hook(log)
 ds_aitoolkit.set_log_hook(log)
+ds_lorascore.set_log_hook(log)
 
 
 def load_config():
@@ -248,6 +254,8 @@ class Studio:
 
     def op_run(self, data):
         self._training_guard("rendering")
+        if ds_lorascore.SCORER.state["running"]:
+            raise RuntimeError("a LoRA scoring is using the engine: wait for it or cancel it")
         name = data.get("name")
         only = data.get("only")
         if only is not None:
@@ -261,7 +269,8 @@ class Studio:
         return {"cancelled": self.runner.cancel()}
 
     def op_status(self, data):
-        return {"status": self.runner.status(), "training": ds_aitoolkit.trainer().status()}
+        return {"status": self.runner.status(), "training": ds_aitoolkit.trainer().status(),
+                "lora_score": ds_lorascore.SCORER.status()}
 
     def op_card_update(self, data):
         p = self._project(data)
@@ -323,8 +332,8 @@ class Studio:
         job = str(data.get("job") or (p.get("last_aitk") or {}).get("job") or "").strip()
         if not job:
             raise ValueError("no AI-Toolkit job for this project yet: create it first")
-        if self.runner.state["running"]:
-            raise RuntimeError("a dataset run is in progress: the GPU is busy")
+        if self.runner.state["running"] or ds_lorascore.SCORER.state["running"]:
+            raise RuntimeError("a dataset run or a LoRA scoring is in progress: the GPU is busy")
         # One GPU: the engine Dataset Studio started holds 15 to 30 GB. It is stopped
         # only when the user said so (stop_engine), never silently.
         busy = self.engines.alive_child()
@@ -387,7 +396,10 @@ class Studio:
                    (p.get("engine") if p.get("engine") in names else (names[0] if names else "")))
         return {"job": job, "loras": ds_aitoolkit.job_loras(root, job), "engines": engines,
                 "default_engine": default, "hint": self._arch_hint(ds_aitoolkit.job_arch(root, job)),
-                "copied": (p.get("last_aitk") or {}).get("copied") or []}
+                "copied": (p.get("last_aitk") or {}).get("copied") or [],
+                "default_prompts": ds_lorascore.DEFAULT_PROMPTS,
+                "trigger": (p.get("settings") or {}).get("trigger_word") or "",
+                "scores": [h for h in p.get("lora_scores") or [] if h.get("job") == job]}
 
     def op_lora_copy(self, data):
         p = self._project(data)
@@ -419,6 +431,31 @@ class Studio:
                           f"{target['loras_dir']}"
                           + ("; refresh the LoRA list in the engine" if running else "")))
         return r
+
+    def op_lora_score(self, data):
+        p = self._project(data)
+        root, job = self._job_of(p, data)
+        self._training_guard("scoring a LoRA")
+        if self.runner.state["running"]:
+            raise RuntimeError("a dataset run is in progress: wait for it")
+        names = [e["name"] for e in self._lora_engines()]
+        eng = str(data.get("engine") or ("klein" if "klein" in names else p.get("engine") or "")).strip()
+        ec = (self.config.get("engines") or {}).get(eng) or {}
+        prompts = data.get("prompts")
+        if isinstance(prompts, str):
+            prompts = [l for l in prompts.splitlines()]
+        files = data.get("files")
+        if isinstance(files, str):
+            files = [files]
+        st = ds_lorascore.SCORER.start(
+            p["name"], self.engines, eng or None, root, job, files or [], prompts=prompts,
+            weight=float(data.get("weight") or 1.0), baseline=bool(data.get("baseline", True)),
+            seed=int(data.get("seed") if data.get("seed") not in (None, "") else ds_lorascore.DEFAULT_SEED),
+            loras_dir=ds_aitoolkit.engine_loras_dir(ec.get("dir"), ec.get("loras_dir")) if ec else None)
+        return {"lora_score": st}
+
+    def op_lora_score_cancel(self, data):
+        return {"cancelled": ds_lorascore.SCORER.cancel()}
 
     def shutdown(self):
         self.engines.stop_all()
