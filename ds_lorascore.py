@@ -13,9 +13,11 @@ mean_base, scored, rows: [{prompt, seed, lora: {file, score}, base: {...}}], whe
 
 The engine's model must match the LoRA (a Klein 4B LoRA is skipped on the 9B, the
 engine says so). The protocol's gen op does not switch the running instance's model
-(cz_protocol: 'model override ignored on the remote route'), so the run checks the
-loaded model before the first render and after it, and stops with the reason instead
-of scoring renders that ignored the LoRA.
+unless asked with spec.switch_model (crispz-klein, supports.switch_model in its caps):
+when the engine runs the other variant, or nothing yet, the renders carry the right
+base repo and switch_model, the swap is announced, and the model stays loaded. With an
+older engine, or the switch refused, the run stops with the reason instead of scoring
+renders that ignored the LoRA (checked before the first render and after it).
 """
 
 import os
@@ -38,6 +40,9 @@ DEFAULT_SEED = 42
 DEFAULT_SIZE = (832, 1216)
 # the checkpoint each ai-toolkit arch needs on the engine side
 ARCH_MODEL = {"flux2_klein_4b": "4B", "flux2_klein_9b": "9B"}
+# the distilled checkpoint the engine renders with, per variant (the report's tests)
+VARIANT_REPO = {"4B": "black-forest-labs/FLUX.2-klein-4B",
+                "9B": "black-forest-labs/FLUX.2-klein-9B"}
 
 _LOG_HOOK = None
 
@@ -102,7 +107,7 @@ class Scorer:
 
     def start(self, name, engines, engine_name, root, job, files, prompts=None,
               weight=1.0, baseline=True, seed=DEFAULT_SEED, size=DEFAULT_SIZE,
-              steps=None, loras_dir=None):
+              steps=None, loras_dir=None, switch_model=True):
         with self.lock:
             if self.state["running"]:
                 raise RuntimeError("a LoRA scoring is already running")
@@ -132,7 +137,7 @@ class Scorer:
                           "job": job, "started": time.time()}
             args = (p["name"], engines, engine_name, root, job,
                     [all_loras[f] for f in files], full, float(weight), bool(baseline),
-                    int(seed), size, steps, loras_dir)
+                    int(seed), size, steps, loras_dir, bool(switch_model))
             self.thread = threading.Thread(target=self._run, args=args, daemon=True,
                                            name="ds-lora-score")
             self.thread.start()
@@ -174,7 +179,7 @@ class Scorer:
         return ds_likeness.score(ref_emb, faces)
 
     def _run(self, name, engines, engine_name, root, job, loras, prompts, weight,
-             baseline, seed, size, steps, loras_dir):
+             baseline, seed, size, steps, loras_dir, switch_model=True):
         try:
             p = ds_project.load(name)
             self._say(f"engine: checking {engine_name or engines.default}")
@@ -185,9 +190,19 @@ class Scorer:
             if not (caps.get("supports") or {}).get("faces", True):
                 raise RuntimeError(f"{engine.name} has no face service: nothing to score with")
             arch = ds_aitoolkit.job_arch(root, job)
-            why = model_mismatch(arch, caps.get("model_loaded"))
-            if why:
-                raise RuntimeError(why)
+            loaded = _model_name(caps.get("model_loaded"))
+            why = model_mismatch(arch, loaded)
+            switch = None
+            need = ARCH_MODEL.get(arch or "")
+            can = bool((caps.get("supports") or {}).get("switch_model"))
+            if need and (why or not loaded) and switch_model and can:
+                switch = VARIANT_REPO[need]
+                self._say(f"engine on {loaded or 'no model yet'}: switching it to {switch} "
+                          f"for the LoRA (it stays loaded afterwards)")
+            elif why:
+                raise RuntimeError(why + ("" if can or not switch_model else
+                                          " (this engine cannot switch it from here: "
+                                          "update it for the protocol's switch_model)"))
             if not p.get("ref_embedding"):
                 w = ds_project.refresh_reference_embedding(p, engine)
                 ds_project.save(p)
@@ -202,6 +217,9 @@ class Scorer:
             spec0 = {"seed": seed, "width": int(size[0]), "height": int(size[1])}
             if steps:
                 spec0["steps"] = int(steps)
+            if switch:
+                # every render, base included: the comparison is on the same model
+                spec0["model"], spec0["switch_model"] = switch, True
             base_rows = None
             if baseline:
                 base_rows = []

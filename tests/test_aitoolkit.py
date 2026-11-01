@@ -335,7 +335,7 @@ import ds_lorascore           # noqa: E402
 
 def _score_setup(studio, tmp_path):  # noqa: F811
     fake_engine.STATE.update({"gens": [], "model": None, "lora_skip": False,
-                              "lora_color": (10, 200, 30)})
+                              "lora_color": (10, 200, 30), "can_switch": False})
     root = fake_aitk(tmp_path / "tk")
     klein = tmp_path / "crispz-klein"
     klein.mkdir()
@@ -415,6 +415,11 @@ def test_lora_score_refuses_a_wrong_model_or_a_skipped_lora(studio, tmp_path, mo
     assert post(studio, "lora_score", {"name": "p", "engine": "fake"})["ok"]
     s = _wait_score()
     assert s["ok"] is False and "Klein 4B" in s["error"] and fake_engine.STATE["gens"] == []
+    assert "switch_model" in s["error"]           # an older engine: says how to fix it
+    # switch refused by the user: the same stop
+    post(studio, "lora_score", {"name": "p", "engine": "fake", "switch_model": False})
+    s = _wait_score()
+    assert s["ok"] is False and "Klein 4B" in s["error"] and "update it" not in s["error"]
     fake_engine.STATE.update({"model": None, "lora_skip": True})
     post(studio, "lora_score", {"name": "p", "engine": "fake", "baseline": False})
     s = _wait_score()
@@ -423,3 +428,25 @@ def test_lora_score_refuses_a_wrong_model_or_a_skipped_lora(studio, tmp_path, mo
     fake_engine.STATE.update({"lora_skip": False})
     r = post(studio, "lora_score", {"name": "p", "engine": "fake", "files": ["nope.safetensors"]})
     assert not r["ok"] and "not found" in r["error"]
+
+
+def test_lora_score_switches_a_klein_that_can(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_lorascore, "SCORER", ds_lorascore.Scorer())
+    root, klein, job = _score_setup(studio, tmp_path)
+    fake_engine.STATE.update({"model": "black-forest-labs/FLUX.2-klein-9B", "can_switch": True})
+    post(studio, "lora_score", {"name": "p", "engine": "fake", "prompts": "close-up"})
+    s = _wait_score()
+    assert s["ok"] is True, s
+    specs = fake_engine.STATE["gens"]
+    # every render, the base one included, asks for the 4B with switch_model
+    assert len(specs) == 2 and all(sp["model"] == "black-forest-labs/FLUX.2-klein-4B"
+                                   and sp["switch_model"] for sp in specs)
+    assert fake_engine.STATE["model"] == "black-forest-labs/FLUX.2-klein-4B"
+    h = post(studio, "lora_targets", {"name": "p"})["scores"][0]
+    assert h["model"] == "black-forest-labs/FLUX.2-klein-4B" and h["mean_lora"] >= 99
+    # already on the right model: nothing is asked
+    fake_engine.STATE["gens"] = []
+    post(studio, "lora_score", {"name": "p", "engine": "fake", "prompts": "close-up"})
+    assert _wait_score()["ok"]
+    assert all("model" not in sp for sp in fake_engine.STATE["gens"])
+    fake_engine.STATE.update({"model": None, "can_switch": False})

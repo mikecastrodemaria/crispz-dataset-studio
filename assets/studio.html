@@ -181,9 +181,10 @@ small{color:var(--mut)}
 </dialog>
 <dialog id="scoreDlg">
   <h3>LoRA likeness</h3>
-  <p><small>Job <b id="scJob"></b>. Test renders in the engine (txt2img, same prompt and seed with and without the LoRA), each scored against this project's reference with the card scale (ArcFace cosine x 100). The LoRA is copied into the engine's folder first. The engine must run the checkpoint the LoRA was trained on.</small></p>
+  <p><small>Job <b id="scJob"></b>. Test renders in the engine (txt2img, same prompt and seed with and without the LoRA), each scored against this project's reference with the card scale (ArcFace cosine x 100). The LoRA is copied into the engine's folder first. The engine must run the checkpoint the LoRA was trained on: crispz-klein can be switched from here.</small></p>
   <div class="row"><label>LoRA files</label><div id="scFiles" style="flex:1;display:flex;flex-wrap:wrap;gap:4px 12px"></div></div>
   <div class="row"><label>Engine</label><select id="scEng"></select><label style="min-width:0">Weight</label><input type="number" id="scW" value="1" step="0.1" min="0" max="2" style="width:70px"><label style="min-width:0">Seed</label><input type="number" id="scSeed" value="42" style="width:90px"><label style="min-width:0"><input type="checkbox" id="scBase" checked> also without the LoRA</label></div>
+  <div class="row"><label></label><label style="min-width:0"><input type="checkbox" id="scSwitch" checked> switch the engine to the LoRA's Klein checkpoint if needed (it stays loaded)</label></div>
   <div class="row"><label>Test prompts</label><small>one per line, the trigger word (<span id="scTrig"></span>) is put in front</small></div>
   <textarea id="scPrompts" style="min-height:84px"></textarea>
   <div class="warn" id="scHint"></div>
@@ -381,7 +382,7 @@ function renderScores(list){list=(list||[]).slice().sort((a,b)=>(b.final-a.final
 $('scTable').addEventListener('click',ev=>{const tr=ev.target.closest('tr[data-k]');if(!tr)return;SC_SEL=tr.dataset.k;renderScores(SC_T.scores);});
 $('scGrid').addEventListener('click',ev=>{if(ev.target.tagName==='IMG')window.open(ev.target.src,'_blank');});
 $('scGo').onclick=async()=>{const files=[...$('scFiles').querySelectorAll('input:checked')].map(x=>x.value);if(!files.length)return $('scTxt').textContent='pick at least one LoRA file';
-  $('scGo').disabled=true;const r=await api('lora_score',{name:P.name,job:SC_T.job,files,engine:$('scEng').value,weight:+$('scW').value||1,seed:+$('scSeed').value,baseline:$('scBase').checked,prompts:$('scPrompts').value});
+  $('scGo').disabled=true;const r=await api('lora_score',{name:P.name,job:SC_T.job,files,engine:$('scEng').value,weight:+$('scW').value||1,seed:+$('scSeed').value,baseline:$('scBase').checked,switch_model:$('scSwitch').checked,prompts:$('scPrompts').value});
   if(!r.ok){$('scGo').disabled=false;$('scTxt').textContent=r.error;return;}pollScore();};
 $('scCancel').onclick=()=>api('lora_score_cancel');
 let SC_WAS=false;

@@ -41,7 +41,8 @@ Ops:
   aitk_train_stop {}                    stop the training (whole process tree)
   lora_targets {name, job?}             the job's LoRA files + the engines' LoRA folders
   lora_copy {name, job?, file?, engine?} copy a LoRA of the job into an engine's folder
-  lora_score {name, job?, files?, engine?, prompts?, weight?, baseline?, seed?}
+  lora_score {name, job?, files?, engine?, prompts?, weight?, baseline?, seed?,
+              switch_model?}
                                         txt2img tests with / without the LoRA, scored
                                         against the reference (thread; see status)
   lora_score_cancel {}
@@ -451,7 +452,8 @@ class Studio:
             p["name"], self.engines, eng or None, root, job, files or [], prompts=prompts,
             weight=float(data.get("weight") or 1.0), baseline=bool(data.get("baseline", True)),
             seed=int(data.get("seed") if data.get("seed") not in (None, "") else ds_lorascore.DEFAULT_SEED),
-            loras_dir=ds_aitoolkit.engine_loras_dir(ec.get("dir"), ec.get("loras_dir")) if ec else None)
+            loras_dir=ds_aitoolkit.engine_loras_dir(ec.get("dir"), ec.get("loras_dir")) if ec else None,
+            switch_model=bool(data.get("switch_model", True)))
         return {"lora_score": st}
 
     def op_lora_score_cancel(self, data):

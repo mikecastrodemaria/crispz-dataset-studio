@@ -60,10 +60,13 @@
     scored against the project's reference (ArcFace cosine x 100). Several saves of
     the job (final, 1250, 1000...) are scored in one go, the table compares their
     means and shows the renders side by side. A shot with no face (rear view) is not
-    scored. The engine must run the checkpoint the LoRA was trained on: the protocol's
-    txt2img does not switch the running model, so a 4B LoRA on a 9B engine (or a LoRA
-    the engine reports as skipped) stops the scoring with the reason instead of
-    scoring renders that ignored it. Renders and `scores.json` are kept in
+    scored. The engine must run the checkpoint the LoRA was trained on: crispz-klein
+    with the protocol's `switch_model` (its caps say `supports.switch_model`) is
+    switched to FLUX.2-klein-4B or 9B for the test, said in the log, and keeps that
+    model afterwards (box "switch the engine", on by default). With an older engine,
+    or the box unticked, a 4B LoRA on a 9B engine (or a LoRA the engine reports as
+    skipped) stops the scoring with the reason instead of scoring renders that
+    ignored it. Renders and `scores.json` are kept in
     `projects/<name>/lora_tests/<lora>/`, the means in `project.json`. One GPU job at
     a time: no scoring during a run or a training, and the reverse.
 
