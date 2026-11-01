@@ -110,6 +110,11 @@ DEFAULT_SETTINGS = {
     # character's traits on close-ups (25-shot run of 2026-10-29). Captions do not
     # carry it: the trigger word is the training-side identity.
     "subject": "",
+    # Autopilot (ds_autopilot, 2026-11-01): Run chains the dataset, the export, the
+    # ai-toolkit job, the training and the LoRA score. Preset and steps of the job,
+    # and the engine the LoRA is scored on ("" = no score).
+    "autopilot": False, "auto_preset": "klein4b", "auto_steps": 1500,
+    "auto_score": True, "auto_score_engine": "klein",
 }
 
 # A line the face model cannot judge (rear view, closed eyes, face hidden): the card
@@ -366,6 +371,15 @@ def update_settings(p, new):
         s["caption_source"] = "prompt"
     if s.get("export_format") not in ("png", "jpg"):
         s["export_format"] = "png"
+    s["autopilot"] = bool(s.get("autopilot"))
+    s["auto_score"] = bool(s.get("auto_score", True))
+    s["auto_score_engine"] = str(s.get("auto_score_engine") or "").strip()
+    try:
+        s["auto_steps"] = max(50, min(100000, int(s.get("auto_steps") or 1500)))
+    except (TypeError, ValueError):
+        s["auto_steps"] = 1500
+    if s.get("auto_preset") not in ("klein4b", "klein9b"):
+        s["auto_preset"] = "klein4b"
     _rebuild_cards(p)
     save(p)
     return p

@@ -46,7 +46,12 @@ Ops:
                                         txt2img tests with / without the LoRA, scored
                                         against the reference (thread; see status)
   lora_score_cancel {}
-  status {} also carries 'training' and 'lora_score' (job, progress, log tail, result)
+  autopilot_start {name}                Run + export + job + training + score, hands off
+                                        (the project's auto_* settings)
+  autopilot_queue {names: [...]}        the autopilot on several projects, one after
+                                        the other (each with its own auto_* settings)
+  autopilot_cancel {all?}               all: also empty the queue
+  status {} also carries 'training', 'lora_score' and 'autopilot' (job, progress, log tail, result)
 """
 
 import os
@@ -66,6 +71,7 @@ import ds_engines
 import ds_project
 import ds_aitoolkit
 import ds_lorascore
+import ds_autopilot
 import ds_captions
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -87,6 +93,7 @@ ds_engines.set_log_hook(log)
 ds_project.set_log_hook(log)
 ds_aitoolkit.set_log_hook(log)
 ds_lorascore.set_log_hook(log)
+ds_autopilot.set_log_hook(log)
 
 
 def load_config():
@@ -119,7 +126,26 @@ class Studio:
         self.config = config or load_config()
         self.engines = ds_engines.Engines(self.config)
         self.runner = ds_project.RUNNER
+        self._resume_autopilot()
 
+    def _resume_autopilot(self):
+        """A chain cut by a restart during the training: the training is detached and
+        went on, so the chain picks up there (then scores). Any other step: said."""
+        ap = ds_autopilot.autopilot()
+        st = ap.status()
+        cut = st.get("interrupted")
+        if not cut:
+            return
+        tr = ds_aitoolkit.trainer()
+        if cut == "training" and st.get("job") and tr.state.get("job") == st["job"]:
+            log(f"autopilot: resuming '{st.get('project')}' at the training ({st['job']})")
+            try:
+                ap.start(self, st["project"], resume_at="training")
+            except Exception as e:
+                log(f"autopilot: cannot resume: {e}")
+        else:
+            log(f"autopilot: the chain of '{st.get('project')}' was cut at the {cut} by a "
+                f"restart; Run again to go on")
     # -- helpers --------------------------------------------------------------
     def _project(self, data):
         name = data.get("name")
@@ -271,7 +297,8 @@ class Studio:
 
     def op_status(self, data):
         return {"status": self.runner.status(), "training": ds_aitoolkit.trainer().status(),
-                "lora_score": ds_lorascore.SCORER.status()}
+                "lora_score": ds_lorascore.SCORER.status(),
+                "autopilot": ds_autopilot.autopilot().status()}
 
     def op_card_update(self, data):
         p = self._project(data)
@@ -345,6 +372,9 @@ class Studio:
                                  f"GPU: stop it to train"}
             log(f"training: stopping engine '{busy.name}' first (GPU)")
             busy.stop()
+            stopped = busy.name
+        else:
+            stopped = None
         warnings = []
         others = [e["name"] for e in self.engines.statuses()
                   if e.get("running") and not e.get("started_by_us")]
@@ -354,7 +384,7 @@ class Studio:
             for w in warnings:
                 log(f"training: {w}")
         st = ds_aitoolkit.trainer().start(root, job, project=p["name"])
-        return {"training": st, "warnings": warnings}
+        return {"training": st, "warnings": warnings, "stopped_engine": stopped}
 
     def op_aitk_train_stop(self, data):
         return {"stopped": ds_aitoolkit.trainer().stop(),
@@ -458,6 +488,46 @@ class Studio:
 
     def op_lora_score_cancel(self, data):
         return {"cancelled": ds_lorascore.SCORER.cancel()}
+
+    def _autopilot_opts(self, p, engine=None):
+        s = p.get("settings") or {}
+        if not p.get("reference"):
+            raise ValueError(f"'{p['name']}': set a reference photo first")
+        return {"engine": engine or p.get("engine") or None,
+                "preset": s.get("auto_preset") or "klein4b",
+                "steps": int(s.get("auto_steps") or 1500),
+                "score": bool(s.get("auto_score", True)),
+                "score_engine": s.get("auto_score_engine") or ""}
+
+    def _autopilot_guard(self):
+        if not ds_aitoolkit.find_root(self.config.get("ai_toolkit_dir")):
+            raise FileNotFoundError("the autopilot needs the AI-Toolkit folder: set it in Settings")
+        self._training_guard("starting the autopilot")
+        if self.runner.state["running"] or ds_lorascore.SCORER.state["running"]:
+            raise RuntimeError("a run or a LoRA scoring is in progress: wait for it")
+
+    def op_autopilot_queue(self, data):
+        names = [str(n) for n in (data.get("names") or []) if str(n).strip()]
+        if not names:
+            raise ValueError("pick at least one project")
+        self._autopilot_guard()
+        items = [(ds_project.load(n)["name"], self._autopilot_opts(ds_project.load(n)))
+                 for n in names]
+        st = ds_autopilot.autopilot().start_queue(self, items)
+        log(f"autopilot: queue of {len(items)} project(s) started")
+        return {"autopilot": st}
+
+    def op_autopilot_start(self, data):
+        p = self._project(data)
+        self._autopilot_guard()
+        opts = self._autopilot_opts(p, data.get("engine"))
+        st = ds_autopilot.autopilot().start(self, p["name"], opts, queue=[], history=[])
+        log(f"autopilot: '{p['name']}' started ({opts['preset']}, {opts['steps']} steps, "
+            f"score on {opts['score_engine'] or 'none'})")
+        return {"autopilot": st}
+
+    def op_autopilot_cancel(self, data):
+        return {"cancelled": ds_autopilot.autopilot().cancel(self, all_=bool(data.get("all")))}
 
     def shutdown(self):
         self.engines.stop_all()

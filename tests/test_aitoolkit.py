@@ -2,6 +2,7 @@
 and the job (dataset copy + config), then both over HTTP."""
 
 import os
+import json
 import time
 
 import pytest
@@ -450,3 +451,104 @@ def test_lora_score_switches_a_klein_that_can(studio, tmp_path, monkeypatch):  #
     assert _wait_score()["ok"]
     assert all("model" not in sp for sp in fake_engine.STATE["gens"])
     fake_engine.STATE.update({"model": None, "can_switch": False})
+
+
+# ------------------------------------------------------------------ autopilot
+import ds_autopilot           # noqa: E402
+
+
+def _auto_setup(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_lorascore, "SCORER", ds_lorascore.Scorer())
+    monkeypatch.setattr(ds_aitoolkit, "TRAINER", ds_aitoolkit.Trainer(str(tmp_path / "t.json")))
+    monkeypatch.setattr(ds_autopilot, "AUTOPILOT",
+                        ds_autopilot.Autopilot(str(tmp_path / "ap.json"), poll=0.05))
+    fake_engine.STATE.update({"gens": [], "model": None, "lora_skip": False,
+                              "lora_color": (10, 200, 30), "can_switch": False})
+    root = fake_aitk_trainable(tmp_path / "tk", mode="ok")
+    klein = tmp_path / "crispz-klein"
+    klein.mkdir()
+    cfg = post(studio, "config_get")["config"]
+    cfg["ai_toolkit_dir"] = str(root)
+    cfg["engines"]["fake"]["dir"] = str(klein)
+    post(studio, "config_set", {"config": cfg})
+    return root, klein
+
+
+def _new_auto_project(studio, name, prompts):  # noqa: F811
+    post(studio, "project_new", {"name": name})
+    r = post(studio, "project_settings", {"name": name, "settings": {
+        "prompts": prompts, "width": 32, "height": 32, "trigger_word": "tok",
+        "max_rerolls": 0, "autopilot": True, "auto_steps": 1500,
+        "auto_score_engine": "fake"}})
+    assert r["ok"] and r["project"]["settings"]["autopilot"] is True
+    assert post(studio, "set_reference", {"name": name, "data": data_url((10, 200, 30))})["ok"]
+
+
+def _wait_auto(secs=60):
+    ap = ds_autopilot.autopilot()
+    for _ in range(secs * 20):
+        st = ap.status()
+        if not st.get("running") and not st.get("queue"):
+            time.sleep(0.1)
+            st = ap.status()
+            if not st.get("running") and not st.get("queue"):
+                return st
+        time.sleep(0.05)
+    raise AssertionError(f"autopilot did not end: {ap.status().get('text')}")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake interpreter is a symlink")
+def test_autopilot_goes_from_the_reference_to_a_scored_lora(studio, tmp_path, monkeypatch):  # noqa: F811
+    root, klein = _auto_setup(studio, tmp_path, monkeypatch)
+    _new_auto_project(studio, "a", ["one", "two", "three", "four", "five"])
+    r = post(studio, "autopilot_start", {"name": "a"})
+    assert r["ok"], r
+    st = _wait_auto()
+    assert st["ok"] is True, st.get("log")
+    assert st["steps"] == {"dataset": "done", "export": "done", "job": "done",
+                           "training": "done", "score": "done"}
+    job = st["job"]
+    assert job == "a_klein4b_v1"
+    assert os.path.isfile(klein / "loras" / (job + ".safetensors"))
+    assert st["result"]["mean_lora"] >= 99 and st["result"]["mean_base"] < 99
+    p = ds_project.load("a")
+    assert p["last_aitk"]["job"] == job and p["lora_scores"]
+    assert post(studio, "status")["autopilot"]["project"] == "a"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake interpreter is a symlink")
+def test_autopilot_queue_goes_on_after_a_failed_project(studio, tmp_path, monkeypatch):  # noqa: F811
+    _auto_setup(studio, tmp_path, monkeypatch)
+    _new_auto_project(studio, "bad", ["one", "FAIL two", "three", "four", "five"])
+    _new_auto_project(studio, "good", ["one", "two", "three", "four", "five"])
+    post(studio, "project_new", {"name": "noref"})
+    r = post(studio, "autopilot_queue", {"names": ["bad", "noref"]})
+    assert not r["ok"] and "reference" in r["error"]
+    r = post(studio, "autopilot_queue", {"names": ["bad", "good"]})
+    assert r["ok"], r
+    st = _wait_auto()
+    h = {x["project"]: x for x in st["history"]}
+    assert h["bad"]["ok"] is False and "002" in h["bad"]["error"]
+    assert h["bad"]["steps"]["dataset"] == "failed" and h["bad"]["steps"]["training"] == "pending"
+    assert h["good"]["ok"] is True and h["good"]["steps"]["score"] == "done"
+    assert st["project"] == "good" and st["queue"] == []
+
+
+def test_autopilot_needs_the_ai_toolkit_folder(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_autopilot, "AUTOPILOT",
+                        ds_autopilot.Autopilot(str(tmp_path / "ap.json"), poll=0.05))
+    post(studio, "project_new", {"name": "x"})
+    post(studio, "set_reference", {"name": "x", "data": data_url()})
+    r = post(studio, "autopilot_start", {"name": "x"})
+    assert not r["ok"] and "AI-Toolkit" in r["error"]
+
+
+def test_autopilot_resumes_a_training_cut_by_a_restart(tmp_path):
+    path = str(tmp_path / "ap.json")
+    with open(path, "w") as fh:
+        json.dump({"running": True, "project": "p", "step": "training", "job": "j_v1",
+                   "steps": {"dataset": "done", "export": "done", "job": "done",
+                             "training": "running", "score": "pending"}}, fh)
+    ap = ds_autopilot.Autopilot(path)
+    st = ap.status()
+    assert st["running"] is False and st["interrupted"] == "training"

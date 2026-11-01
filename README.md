@@ -70,6 +70,25 @@
     `projects/<name>/lora_tests/<lora>/`, the means in `project.json`. One GPU job at
     a time: no scoring during a run or a training, and the reverse.
 
+### Autopilot and queue
+
+Tick "Run goes all the way to the LoRA" (Autopilot box) and Run becomes "Run + LoRA":
+the dataset is rendered, then exported, the AI-Toolkit job is created (model and steps
+of the box), the engine Dataset Studio started is stopped to free the GPU, the training
+runs, and the LoRA is copied into the scoring engine (klein by default, "no score" to
+stop at the training) and scored with and without: the final file and the two latest
+saves, the engine switched to the right Klein checkpoint when it can. Each step is
+checked before the next (a failed or unrendered card, fewer than 5 cards kept, a
+training that does not end "done", a LoRA the engine skips): the chain stops with its
+reason, shown in the violet panel and the log. Cancel stops the step in flight. If
+Dataset Studio is restarted during the training (which keeps going), the chain picks
+up there (`logs/autopilot.json`).
+
+"Queue" runs the autopilot on several projects, one after the other, each with the
+settings of its own Autopilot box: a night batch. A project that fails is recorded
+with its reason and the next one starts; "Cancel all" also empties the queue. The
+panel lists each project's outcome and LoRA likeness.
+
 "Clone" (header) copies the open project under a new name, with its renders and
 tries, or with the reference, settings and prompts only (every card pending): to try
 another model or subject on the same identity without losing the first dataset.
