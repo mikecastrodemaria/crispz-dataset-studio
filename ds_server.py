@@ -39,6 +39,8 @@ Ops:
   aitk_train {name, job?, stop_engine?} start ai-toolkit on the job (default: the
                                         project's last one); the GPU must be free
   aitk_train_stop {}                    stop the training (whole process tree)
+  lora_targets {name, job?}             the job's LoRA files + the engines' LoRA folders
+  lora_copy {name, job?, file?, engine?} copy a LoRA of the job into an engine's folder
   status {} also carries 'training' (job, progress, log tail, result)
 """
 
@@ -347,6 +349,76 @@ class Studio:
     def op_aitk_train_stop(self, data):
         return {"stopped": ds_aitoolkit.trainer().stop(),
                 "training": ds_aitoolkit.trainer().status()}
+
+    def _job_of(self, p, data):
+        root = ds_aitoolkit.find_root(self.config.get("ai_toolkit_dir"))
+        if not root:
+            raise FileNotFoundError("set the AI-Toolkit folder in Settings first")
+        job = str(data.get("job") or (p.get("last_aitk") or {}).get("job") or "").strip()
+        if not job:
+            raise ValueError("no AI-Toolkit job for this project yet")
+        return root, job
+
+    def _lora_engines(self):
+        out = []
+        for name, ec in (self.config.get("engines") or {}).items():
+            d = ds_aitoolkit.engine_loras_dir(ec.get("dir"), ec.get("loras_dir"))
+            if d:
+                out.append({"name": name, "dir": ec.get("dir") or "", "loras_dir": d,
+                            "exists": os.path.isdir(d)})
+        return out
+
+    @staticmethod
+    def _arch_hint(arch):
+        if arch == "flux2_klein_4b":
+            return ("trained on Klein 4B: in crispz-klein pick the FLUX.2-klein-4B "
+                    "checkpoint (on 9B the LoRA is skipped, hidden sizes differ)")
+        if arch == "flux2_klein_9b":
+            return ("trained on Klein 9B: in crispz-klein pick the FLUX.2-klein-9B "
+                    "checkpoint (on 4B the LoRA is skipped)")
+        return ""
+
+    def op_lora_targets(self, data):
+        p = self._project(data)
+        root, job = self._job_of(p, data)
+        engines = self._lora_engines()
+        names = [e["name"] for e in engines]
+        default = ("klein" if "klein" in names else
+                   (p.get("engine") if p.get("engine") in names else (names[0] if names else "")))
+        return {"job": job, "loras": ds_aitoolkit.job_loras(root, job), "engines": engines,
+                "default_engine": default, "hint": self._arch_hint(ds_aitoolkit.job_arch(root, job)),
+                "copied": (p.get("last_aitk") or {}).get("copied") or []}
+
+    def op_lora_copy(self, data):
+        p = self._project(data)
+        root, job = self._job_of(p, data)
+        loras = ds_aitoolkit.job_loras(root, job)
+        if not loras:
+            raise FileNotFoundError(f"no LoRA in {os.path.join(root, 'output', job)} yet: "
+                                    f"train the job first")
+        f = str(data.get("file") or "").strip()
+        src = next((l for l in loras if l["file"] == f), None) if f else loras[0]
+        if src is None:
+            raise FileNotFoundError(f"no LoRA '{f}' in job '{job}'")
+        eng = str(data.get("engine") or "").strip()
+        target = next((e for e in self._lora_engines() if e["name"] == eng), None)
+        if target is None:
+            raise ValueError(f"engine '{eng}' has no install folder in Settings: "
+                             f"its LoRA folder is unknown")
+        r = ds_aitoolkit.copy_lora(src["path"], target["loras_dir"])
+        hint = self._arch_hint(ds_aitoolkit.job_arch(root, job))
+        la = p.setdefault("last_aitk", {"job": job})
+        la.setdefault("copied", [])
+        la["copied"] = [c for c in la["copied"] if c.get("path") != r["path"]] + \
+                       [{"engine": eng, "path": r["path"], "file": r["file"]}]
+        ds_project.save(p)
+        e = self.engines.by_name.get(eng)
+        running = bool(e and e.caps(max_age=0))
+        r.update(engine=eng, source=src["file"], hint=hint,
+                 message=(f"{r['file']} {'copied to' if r['copied'] else 'already in'} "
+                          f"{target['loras_dir']}"
+                          + ("; refresh the LoRA list in the engine" if running else "")))
+        return r
 
     def shutdown(self):
         self.engines.stop_all()

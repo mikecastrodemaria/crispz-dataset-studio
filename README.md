@@ -47,6 +47,13 @@
    and the next start picks its status up again (`logs/training.json`). The log is
    `<ai-toolkit>/output/<job>.dataset-studio.log`, the LoRA
    `<ai-toolkit>/output/<job>/<job>.safetensors`.
+9. "Copy LoRA to crispz-klein" (the training panel once done, or the green bar):
+   pick the final LoRA or a step save (1250, 1000...) and the engine; the file goes
+   into that app's LoRA folder with the app's own rule (`loras_dir` of its
+   `preferences.json`, then of its `config.txt`, else `<app>/loras`; an engine's
+   `loras_dir` in Dataset Studio's config wins). Never overwritten: the same file is
+   left as is, another one under that name gets `_2`. The dialog reminds which
+   checkpoint to pick (a 4B LoRA is skipped on Klein 9B, and the reverse).
 
 "Clone" (header) copies the open project under a new name, with its renders and
 tries, or with the reference, settings and prompts only (every card pending): to try

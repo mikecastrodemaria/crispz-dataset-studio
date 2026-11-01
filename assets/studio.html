@@ -113,8 +113,8 @@ small{color:var(--mut)}
 </aside>
 <section class="grid">
   <div class="box" id="doneBar"><b id="doneTxt">Dataset complete</b><span style="flex:1"></span>
-    <button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><small id="doneHint"></small></div>
-  <div class="box" id="trainBar"><div class="row" style="margin:0"><b id="trainTxt"></b><span style="flex:1"></span><button id="trainLog">Log</button><button id="trainStop" class="danger">Stop training</button><button id="trainHide">Hide</button></div>
+    <button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><button id="doneLora">Copy LoRA</button><small id="doneHint"></small></div>
+  <div class="box" id="trainBar"><div class="row" style="margin:0"><b id="trainTxt"></b><span style="flex:1"></span><button id="trainLog">Log</button><button id="trainLora" class="primary">Copy LoRA</button><button id="trainStop" class="danger">Stop training</button><button id="trainHide">Hide</button></div>
     <div class="tb"><i></i></div><small id="trainSub"></small><pre id="trainTail" style="display:none"></pre></div>
   <div class="cards" id="cards"></div></section>
 </main>
@@ -165,6 +165,17 @@ small{color:var(--mut)}
   </div>
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('aitkDlg').close()">Close</button><button id="aitkGo" class="primary">Create job</button></div>
   <small id="aitkMsg" class="err"></small>
+</dialog>
+<dialog id="loraDlg">
+  <h3>Copy the LoRA to an engine</h3>
+  <p><small>Job <b id="loraJob"></b>. The file goes into the engine's LoRA folder (its own setting, else &lt;app&gt;/loras); nothing is overwritten.</small></p>
+  <div class="row"><label>LoRA</label><select id="loraFile" style="flex:1"></select></div>
+  <div class="row"><label>Engine</label><select id="loraEng" style="flex:1"></select></div>
+  <div class="row"><label>Folder</label><small id="loraDir"></small></div>
+  <div class="warn" id="loraHint"></div>
+  <div id="loraDone" style="margin-top:6px"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('loraDlg').close()">Close</button><button id="loraGo" class="primary">Copy</button></div>
+  <small id="loraMsg" class="err"></small>
 </dialog>
 <dialog id="zoom"><img alt=""><div class="row" style="justify-content:space-between;margin-top:8px"><span id="zoomInfo"></span><span><button id="zoomPrev" title="previous card (left arrow)">&lt; Prev</button> <button id="zoomNext" title="next card (right arrow)">Next &gt;</button> <button onclick="document.getElementById('zoom').close()">Close (Esc)</button></span></div></dialog>
 
@@ -301,7 +312,7 @@ function datasetComplete(){if(!P||!P.cards.length)return false;const done=P.card
 function renderDoneBar(){const ok=datasetComplete()&&!lastRunning;$('doneBar').style.display=ok?'flex':'none';if(!ok)return;
   const done=P.cards.filter(c=>c.status==='done').length;$('doneTxt').textContent=`Dataset complete: ${done} card(s) kept`;
   const ready=AITK&&AITK.root;$('doneAitk').style.display=ready?'':'none';
-  $('doneTrain').style.display=ready&&P.last_aitk&&!TRAIN.running?'':'none';$('doneTrain').title=P.last_aitk?'train job '+P.last_aitk.job:'';
+  $('doneTrain').style.display=ready&&P.last_aitk&&!TRAIN.running?'':'none';$('doneLora').style.display=ready&&P.last_aitk&&!TRAIN.running?'':'none';$('doneLora').textContent=loraLabel();$('doneTrain').title=P.last_aitk?'train job '+P.last_aitk.job:'';
   $('doneHint').textContent=ready?(P.last_aitk?`last job: ${P.last_aitk.job}`:''):(AITK&&AITK.error?AITK.error:'set the AI-Toolkit folder in Settings to create the training job from here');}
 async function refreshAitk(){const r=await api('aitk_status');AITK=r.ok?r.aitk:null;renderDoneBar();}
 function openAitk(){if(!P||!AITK||!AITK.root)return;const s=$('aitkPreset');s.innerHTML='';
@@ -322,12 +333,29 @@ $('doneTrain').onclick=()=>launchTrain(P&&P.last_aitk?P.last_aitk.job:undefined)
 $('aitkTrain').onclick=()=>launchTrain($('aitkJob').textContent);
 $('trainStop').onclick=async()=>{if(!confirm(`Stop the training ${TRAIN.job}? The saves already written (every 250 steps) stay in its output folder.`))return;
   const r=await api('aitk_train_stop');if(r.ok){TRAIN=r.training;renderTrain();renderDoneBar();}else say(r.error,'err');};
+// ---------- LoRA -> engine ----------
+function loraLabel(){return ENGINES.some(e=>e.name==='klein')?'Copy LoRA to crispz-klein':'Copy LoRA';}
+let LORA_T=null;
+async function openLora(job){if(!P)return;const r=await api('lora_targets',{name:P.name,job});if(!r.ok)return say(r.error,'err');LORA_T=r;
+  $('loraJob').textContent=r.job;const f=$('loraFile');f.innerHTML='';
+  r.loras.forEach(l=>{const o=document.createElement('option');o.value=l.file;o.textContent=(l.final?'final: ':`step ${l.step}: `)+l.file+` (${l.size_mb} MB)`;f.appendChild(o);});
+  if(!r.loras.length){const o=document.createElement('option');o.textContent='no LoRA yet: train the job first';f.appendChild(o);}
+  const e=$('loraEng');e.innerHTML='';r.engines.forEach(x=>{const o=document.createElement('option');o.value=x.name;o.textContent=x.name+(x.exists?'':' (folder will be created)');e.appendChild(o);});
+  e.value=r.default_engine;e.onchange=()=>{const x=r.engines.find(y=>y.name===e.value);$('loraDir').textContent=x?x.loras_dir:'';$('loraGo').textContent=x?(x.name==='klein'?'Copy to crispz-klein':'Copy to '+x.name):'Copy';};e.onchange();
+  $('loraHint').textContent=r.hint||'';$('loraMsg').textContent=r.engines.length?'':'no engine with an install folder in Settings';
+  $('loraDone').innerHTML=(r.copied||[]).map(c=>`<small>already copied: ${esc(c.path)} (${esc(c.engine)})</small>`).join('<br>');
+  $('loraGo').disabled=!r.loras.length||!r.engines.length;$('loraDlg').showModal();}
+$('loraGo').onclick=async()=>{$('loraGo').disabled=true;const r=await api('lora_copy',{name:P.name,job:LORA_T.job,file:$('loraFile').value,engine:$('loraEng').value});$('loraGo').disabled=false;
+  if(!r.ok){$('loraMsg').textContent=r.error;return say(r.error,'err');}$('loraMsg').textContent='';
+  $('loraDone').innerHTML=`<div style="color:var(--ok)">${esc(r.message)}</div>`+(r.hint?`<div class="warn">${esc(r.hint)}</div>`:'');say(r.message);};
+$('doneLora').onclick=()=>openLora(P&&P.last_aitk?P.last_aitk.job:undefined);
+$('trainLora').onclick=()=>openLora(TRAIN.job);
 $('trainLog').onclick=()=>{const t=$('trainTail');t.style.display=t.style.display==='none'?'':'none';t.scrollTop=1e9;};
 $('trainHide').onclick=()=>{TRAIN_HIDDEN=TRAIN.job+':'+TRAIN.started;renderTrain();};
 function renderTrain(){const t=TRAIN||{};const show=t.active&&(t.running||TRAIN_HIDDEN!==t.job+':'+t.started);$('trainBar').style.display=show?'block':'none';
   $('runBtn').disabled=!!t.running||lastRunning;if(!show)return;
   const pg=t.progress||{};const pct=pg.total?Math.round(100*pg.step/pg.total):0;$('trainBar').querySelector('.tb i').style.width=(t.running?pct:(t.result==='done'?100:pct))+'%';
-  $('trainStop').style.display=t.running?'':'none';$('trainHide').style.display=t.running?'none':'';
+  $('trainStop').style.display=t.running?'':'none';$('trainLora').style.display=!t.running&&t.result==='done'&&P&&t.project===P.name?'':'none';$('trainLora').textContent=loraLabel();$('trainHide').style.display=t.running?'none':'';
   $('trainTxt').textContent=t.running?`Training ${t.job}: `+(pg.total?`step ${pg.step}/${pg.total} (${pct}%)`:'loading the model and caching latents...'):
     (t.result==='done'?`Training ${t.job} done`:t.result==='stopped'?`Training ${t.job} stopped`:`Training ${t.job} failed`+(t.returncode!=null?` (exit ${t.returncode})`:''));
   const bits=[];if(pg.loss)bits.push('loss '+pg.loss);if(pg.elapsed)bits.push('elapsed '+pg.elapsed);if(t.running&&pg.eta)bits.push('left '+pg.eta);bits.push(t.minutes+' min total');

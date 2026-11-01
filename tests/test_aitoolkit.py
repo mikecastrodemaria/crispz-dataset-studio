@@ -260,3 +260,69 @@ def test_train_over_http_blocks_the_gpu(studio, tmp_path, monkeypatch):  # noqa:
     assert not r["ok"] and "GPU" in r["error"]
     r = post(studio, "aitk_train_stop")
     assert r["ok"] and r["stopped"] and r["training"]["result"] == "stopped"
+
+
+# ------------------------------------------------------------------ LoRA -> engine
+def test_engine_loras_dir_follows_the_app_rule(tmp_path):
+    app = tmp_path / "crispz-klein"
+    app.mkdir()
+    assert ds_aitoolkit.engine_loras_dir(str(app)) == str(app / "loras")
+    (app / "config.txt").write_text('{"loras_dir": "models/loras"}')
+    assert ds_aitoolkit.engine_loras_dir(str(app)) == str(app / "models" / "loras")
+    (app / "preferences.json").write_text('{"loras_dir": "%s"}' % str(tmp_path / "L").replace("\\", "/"))
+    assert ds_aitoolkit.engine_loras_dir(str(app)) == os.path.normpath(str(tmp_path / "L"))
+    assert ds_aitoolkit.engine_loras_dir(str(app), str(tmp_path / "X")) == str(tmp_path / "X")
+    assert ds_aitoolkit.engine_loras_dir("") is None
+
+
+def test_job_loras_order_and_copy_never_overwrites(tmp_path):
+    root = fake_aitk(tmp_path)
+    out = root / "output" / "j_v1"
+    out.mkdir(parents=True)
+    for f, b in (("j_v1_000001000.safetensors", b"a"), ("j_v1.safetensors", b"final"),
+                 ("j_v1_000001250.safetensors", b"b")):
+        (out / f).write_bytes(b)
+    ls = ds_aitoolkit.job_loras(str(root), "j_v1")
+    assert [l["file"] for l in ls] == ["j_v1.safetensors", "j_v1_000001250.safetensors",
+                                       "j_v1_000001000.safetensors"]
+    assert ls[0]["final"] and ls[1]["step"] == 1250
+    dst = tmp_path / "loras"
+    r = ds_aitoolkit.copy_lora(ls[0]["path"], str(dst))
+    assert r["copied"] and (dst / "j_v1.safetensors").read_bytes() == b"final"
+    r = ds_aitoolkit.copy_lora(ls[0]["path"], str(dst))        # same file: left as is
+    assert not r["copied"] and r["file"] == "j_v1.safetensors"
+    (out / "j_v1.safetensors").write_bytes(b"retrained")
+    r = ds_aitoolkit.copy_lora(ls[0]["path"], str(dst))        # another file: _2
+    assert r["copied"] and r["file"] == "j_v1_2.safetensors"
+    assert (dst / "j_v1.safetensors").read_bytes() == b"final"
+
+
+def test_lora_copy_over_http(studio, tmp_path):  # noqa: F811
+    root = fake_aitk(tmp_path / "tk")
+    klein = tmp_path / "crispz-klein"
+    klein.mkdir()
+    cfg = post(studio, "config_get")["config"]
+    cfg["ai_toolkit_dir"] = str(root)
+    cfg["engines"]["klein"] = {"url": "http://127.0.0.1:1", "dir": str(klein), "launch": False}
+    post(studio, "config_set", {"config": cfg})
+    post(studio, "project_new", {"name": "p"})
+    assert not post(studio, "lora_targets", {"name": "p"})["ok"]        # no job yet
+    lot = make_lot(tmp_path / "lot")
+    p = ds_project.load("p")
+    p["settings"]["trigger_word"] = "ohwx character"
+    job = ds_aitoolkit.create_job(p, str(lot), cfg, preset="klein4b")["job"]
+    p["last_aitk"] = {"job": job}
+    ds_project.save(p)
+    r = post(studio, "lora_copy", {"name": "p", "engine": "klein"})
+    assert not r["ok"] and "train the job first" in r["error"]
+    (root / "output" / job).mkdir(parents=True)
+    (root / "output" / job / (job + ".safetensors")).write_bytes(b"lora")
+    t = post(studio, "lora_targets", {"name": "p"})
+    assert t["ok"] and t["default_engine"] == "klein" and t["loras"][0]["final"]
+    assert t["engines"][0]["loras_dir"] == str(klein / "loras") and "4B" in t["hint"]
+    r = post(studio, "lora_copy", {"name": "p", "engine": "klein"})
+    assert r["ok"] and r["copied"] and os.path.isfile(klein / "loras" / (job + ".safetensors"))
+    assert "4B" in r["hint"]
+    r = post(studio, "lora_copy", {"name": "p", "engine": "fake"})       # no dir
+    assert not r["ok"] and "install folder" in r["error"]
+    assert post(studio, "lora_targets", {"name": "p"})["copied"][0]["engine"] == "klein"

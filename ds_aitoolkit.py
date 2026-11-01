@@ -532,3 +532,87 @@ def trainer():
     if TRAINER is None:
         TRAINER = Trainer()
     return TRAINER
+
+
+# ----------------------------------------------------------------------------
+# The trained LoRA -> a family engine's LoRA folder
+# ----------------------------------------------------------------------------
+def engine_loras_dir(engine_dir, override=None):
+    """The folder a crispz family app scans for LoRAs, with the app's own rule
+    (crispz-klein cz_pipeline.LORAS_DIR): preferences.json 'loras_dir' (set from its
+    UI), then config.txt / config-sample.txt 'loras_dir', then <app>/loras. The
+    engine's 'loras_dir' in Dataset Studio's config wins over all of them."""
+    if override and str(override).strip():
+        return os.path.normpath(os.path.expanduser(str(override).strip()))
+    if not engine_dir or not os.path.isdir(engine_dir):
+        return None
+    for f in ("preferences.json", "config.txt", "config-sample.txt"):
+        try:
+            with open(os.path.join(engine_dir, f), encoding="utf-8") as fh:
+                d = (json.load(fh) or {}).get("loras_dir")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if d and str(d).strip():
+            d = os.path.expanduser(str(d).strip())
+            return os.path.normpath(d if os.path.isabs(d) else os.path.join(engine_dir, d))
+    return os.path.join(engine_dir, "loras")
+
+
+def job_loras(root, job):
+    """The LoRA files of a job, final first, then the step saves newest first:
+    [{file, path, step, size_mb}]."""
+    d = os.path.join(root, "output", job)
+    out = []
+    if os.path.isdir(d):
+        for f in os.listdir(d):
+            if not f.endswith(".safetensors"):
+                continue
+            m = re.search(r"_(\d{6,})\.safetensors$", f)
+            p = os.path.join(d, f)
+            out.append({"file": f, "path": p, "step": int(m.group(1)) if m else None,
+                        "final": f == job + ".safetensors",
+                        "size_mb": round(os.path.getsize(p) / 1048576.0, 1)})
+    out.sort(key=lambda x: (not x["final"], -(x["step"] or 0)))
+    return out
+
+
+def job_arch(root, job):
+    try:
+        with open(os.path.join(root, "config", job + ".yaml"), encoding="utf-8") as fh:
+            m = re.search(r'^\s*arch:\s*"?([A-Za-z0-9_]+)', fh.read(), re.M)
+        return m.group(1) if m else ""
+    except OSError:
+        return ""
+
+
+def _same_file(a, b):
+    if os.path.getsize(a) != os.path.getsize(b):
+        return False
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        while True:
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
+
+
+def copy_lora(src, dst_dir):
+    """Copies src into dst_dir under its own name. The same file already there is
+    left as is; another file under that name is never overwritten (_2, _3).
+    Returns {path, file, copied: bool}."""
+    if not src or not os.path.isfile(src):
+        raise FileNotFoundError(f"LoRA not found: {src}")
+    os.makedirs(dst_dir, exist_ok=True)
+    stem, ext = os.path.splitext(os.path.basename(src))
+    dst, i = os.path.join(dst_dir, stem + ext), 2
+    while os.path.exists(dst):
+        if _same_file(src, dst):
+            _log(f"LoRA {os.path.basename(dst)} already in {dst_dir} (same file)")
+            return {"path": dst, "file": os.path.basename(dst), "copied": False}
+        dst = os.path.join(dst_dir, f"{stem}_{i}{ext}")
+        i += 1
+    shutil.copy2(src, dst + ".tmp")
+    os.replace(dst + ".tmp", dst)
+    _log(f"LoRA copied: {src} -> {dst}")
+    return {"path": dst, "file": os.path.basename(dst), "copied": True}
