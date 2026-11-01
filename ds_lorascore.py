@@ -241,7 +241,8 @@ class Scorer:
             for lo in loras:
                 if self.cancel_flag:
                     raise InterruptedError()
-                cp = ds_aitoolkit.copy_lora(lo["path"], dest)
+                cp = ds_aitoolkit.copy_lora(lo["path"], dest,
+                                            meta=ds_aitoolkit.lora_meta_for(p, job))
                 stem = os.path.splitext(cp["file"])[0]
                 tdir = os.path.join(pdir, "lora_tests", stem)
                 os.makedirs(tdir, exist_ok=True)

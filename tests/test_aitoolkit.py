@@ -552,3 +552,94 @@ def test_autopilot_resumes_a_training_cut_by_a_restart(tmp_path):
     ap = ds_autopilot.Autopilot(path)
     st = ap.status()
     assert st["running"] is False and st["interrupted"] == "training"
+
+
+# ------------------------------------------------------------------ gated check, LoRA metadata
+def _real_lora(path, meta=None):
+    """A real safetensors file, written by hand (no dependency): two float32 tensors."""
+    import struct
+    a = struct.pack("<4f", 1, 2, 3, 4)
+    b = struct.pack("<2f", 5, 6)
+    h = {"lora_A.weight": {"dtype": "F32", "shape": [2, 2], "data_offsets": [0, 16]},
+         "lora_B.weight": {"dtype": "F32", "shape": [2], "data_offsets": [16, 24]}}
+    if meta:
+        h["__metadata__"] = meta
+    hb = json.dumps(h).encode()
+    hb += b" " * (-len(hb) % 8)
+    with open(path, "wb") as fh:
+        fh.write(struct.pack("<Q", len(hb)) + hb + a + b)
+
+
+def test_copy_lora_writes_the_trigger_into_the_copy_only(tmp_path):
+    src = tmp_path / "out" / "j_v1.safetensors"
+    src.parent.mkdir()
+    _real_lora(src, {"name": "j_v1", "software": "ai-toolkit"})
+    before = src.read_bytes()
+    dst = tmp_path / "loras"
+    meta = {"trigger_words": "ohwx character", "crispz_dataset_studio": '{"project": "p"}'}
+    r = ds_aitoolkit.copy_lora(str(src), str(dst), meta=meta)
+    assert r["copied"] and r["meta"]
+    assert src.read_bytes() == before                          # ai-toolkit's file untouched
+    got = ds_aitoolkit.read_lora_meta(r["path"])
+    assert got["trigger_words"] == "ohwx character" and got["software"] == "ai-toolkit"
+    assert ds_aitoolkit._same_tensors(str(src), r["path"])
+    try:                                                        # the real loader agrees
+        from safetensors.numpy import load_file
+        t = load_file(r["path"])
+        assert t["lora_A.weight"].tolist() == [[1, 2], [3, 4]] and t["lora_B.weight"].tolist() == [5, 6]
+    except ImportError:
+        pass
+    # again: the same tensors, same metadata -> left as is, no _2
+    r2 = ds_aitoolkit.copy_lora(str(src), str(dst), meta=meta)
+    assert not r2["copied"] and r2["file"] == "j_v1.safetensors"
+    # a new trigger word: the copy is updated in place, still no _2
+    r3 = ds_aitoolkit.copy_lora(str(src), str(dst), meta=dict(meta, trigger_words="tok"))
+    assert not r3["copied"] and ds_aitoolkit.read_lora_meta(r3["path"])["trigger_words"] == "tok"
+    assert sorted(os.listdir(dst)) == ["j_v1.safetensors"]
+    # a retrained LoRA under the same name: _2, the first one kept
+    _real_lora(src)
+    with open(src, "r+b") as fh:
+        fh.seek(-4, 2)
+        fh.write(b"\x00\x00\x80\x3f")
+    r4 = ds_aitoolkit.copy_lora(str(src), str(dst), meta=meta)
+    assert r4["copied"] and r4["file"] == "j_v1_2.safetensors"
+
+
+def test_gated_check(tmp_path, monkeypatch):
+    root = fake_aitk(tmp_path)
+    repo = "black-forest-labs/FLUX.2-klein-base-9B"
+    monkeypatch.setattr(ds_aitoolkit, "_AUTH_CACHE", {})
+    answers = {"r": {"ok": False, "kind": "GatedRepoError", "error": "403 Client Error"}}
+    monkeypatch.setattr(ds_aitoolkit, "_auth_probe", lambda py, rp, env, timeout=90: answers["r"])
+    r = ds_aitoolkit.check_hf_access(str(root), repo)
+    assert r["ok"] is False and "accept its licence" in r["error"] and repo in r["error"]
+    answers["r"] = {"ok": False, "kind": "ImportError", "error": "no huggingface_hub"}
+    r = ds_aitoolkit.check_hf_access(str(root), repo)
+    assert r["ok"] is None and "going on" in r["warning"]
+    answers["r"] = {"ok": True}
+    assert ds_aitoolkit.check_hf_access(str(root), repo)["ok"] is True
+    answers["r"] = {"ok": False, "kind": "GatedRepoError", "error": "403"}
+    assert ds_aitoolkit.check_hf_access(str(root), repo).get("cached")      # 10 min cache
+    assert ds_aitoolkit.gated_repo_of("klein9b") == repo
+    assert ds_aitoolkit.gated_repo_of("klein4b") is None
+
+
+def test_autopilot_refuses_a_9b_queue_without_access(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_autopilot, "AUTOPILOT",
+                        ds_autopilot.Autopilot(str(tmp_path / "ap.json"), poll=0.05))
+    monkeypatch.setattr(ds_aitoolkit, "_AUTH_CACHE", {})
+    monkeypatch.setattr(ds_aitoolkit, "_auth_probe",
+                        lambda py, rp, env, timeout=90: {"ok": False, "kind": "GatedRepoError",
+                                                         "error": "403"})
+    root = fake_aitk(tmp_path / "tk")
+    cfg = post(studio, "config_get")["config"]
+    cfg["ai_toolkit_dir"] = str(root)
+    post(studio, "config_set", {"config": cfg})
+    post(studio, "project_new", {"name": "nine"})
+    post(studio, "project_settings", {"name": "nine", "settings": {"auto_preset": "klein9b"}})
+    post(studio, "set_reference", {"name": "nine", "data": data_url()})
+    r = post(studio, "autopilot_queue", {"names": ["nine"]})
+    assert not r["ok"] and "FLUX.2-klein-base-9B" in r["error"]
+    assert not ds_autopilot.autopilot().status().get("running")
+    p = ds_project.load("nine")                           # nothing rendered by the queue
+    assert all(c["status"] == "pending" for c in p["cards"])

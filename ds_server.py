@@ -362,6 +362,11 @@ class Studio:
             raise ValueError("no AI-Toolkit job for this project yet: create it first")
         if self.runner.state["running"] or ds_lorascore.SCORER.state["running"]:
             raise RuntimeError("a dataset run or a LoRA scoring is in progress: the GPU is busy")
+        gated = ds_aitoolkit.gated_repo_of(config_path=os.path.join(root, "config", job + ".yaml"))
+        if gated:
+            acc = ds_aitoolkit.check_hf_access(root, gated)
+            if acc.get("ok") is False:
+                raise PermissionError(acc["error"])
         # One GPU: the engine Dataset Studio started holds 15 to 30 GB. It is stopped
         # only when the user said so (stop_engine), never silently.
         busy = self.engines.alive_child()
@@ -448,7 +453,8 @@ class Studio:
         if target is None:
             raise ValueError(f"engine '{eng}' has no install folder in Settings: "
                              f"its LoRA folder is unknown")
-        r = ds_aitoolkit.copy_lora(src["path"], target["loras_dir"])
+        r = ds_aitoolkit.copy_lora(src["path"], target["loras_dir"],
+                                   meta=ds_aitoolkit.lora_meta_for(p, job))
         hint = self._arch_hint(ds_aitoolkit.job_arch(root, job))
         la = p.setdefault("last_aitk", {"job": job})
         la.setdefault("copied", [])
@@ -506,6 +512,14 @@ class Studio:
         if self.runner.state["running"] or ds_lorascore.SCORER.state["running"]:
             raise RuntimeError("a run or a LoRA scoring is in progress: wait for it")
 
+    def _gate_check(self, opts_list):
+        """Before the first card is rendered: the gated base of every preset asked."""
+        root = ds_aitoolkit.find_root(self.config.get("ai_toolkit_dir"))
+        for repo in sorted({ds_aitoolkit.gated_repo_of(o.get("preset")) for o in opts_list} - {None}):
+            acc = ds_aitoolkit.check_hf_access(root, repo)
+            if acc.get("ok") is False:
+                raise PermissionError(acc["error"])
+
     def op_autopilot_queue(self, data):
         names = [str(n) for n in (data.get("names") or []) if str(n).strip()]
         if not names:
@@ -513,6 +527,7 @@ class Studio:
         self._autopilot_guard()
         items = [(ds_project.load(n)["name"], self._autopilot_opts(ds_project.load(n)))
                  for n in names]
+        self._gate_check([o for _, o in items])
         st = ds_autopilot.autopilot().start_queue(self, items)
         log(f"autopilot: queue of {len(items)} project(s) started")
         return {"autopilot": st}
@@ -521,6 +536,7 @@ class Studio:
         p = self._project(data)
         self._autopilot_guard()
         opts = self._autopilot_opts(p, data.get("engine"))
+        self._gate_check([opts])
         st = ds_autopilot.autopilot().start(self, p["name"], opts, queue=[], history=[])
         log(f"autopilot: '{p['name']}' started ({opts['preset']}, {opts['steps']} steps, "
             f"score on {opts['score_engine'] or 'none'})")

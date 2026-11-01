@@ -217,7 +217,20 @@ small{color:var(--mut)}
 
 <script>
 const $=id=>document.getElementById(id);
-let AUTO={}, AUTO_HIDDEN=null;
+let AUTO={}, AUTO_HIDDEN=null, AUTO_HLEN=null;
+// ---------- notifications ----------
+// Asked on a click that starts something long (Autopilot, Queue, Launch training): the
+// browser only shows the permission prompt on a user gesture. 127.0.0.1 counts as a
+// secure origin, so it works without https. Denied or unsupported: nothing, the
+// panels still say it.
+function askNotify(){try{if(window.Notification&&Notification.permission==='default')Notification.requestPermission();}catch(e){}}
+function notify(title,body){try{if(window.Notification&&Notification.permission==='granted')new Notification(title,{body:body||'',tag:'crispz-ds-'+title});}catch(e){}}
+const BASE_TITLE=document.title;
+function tabTitle(){let t='';const a=AUTO||{};
+  if(a.running)t=`[${(STEP_LABEL[a.step]||a.step||'').replace(/^\d /,'')}${(a.queue||[]).length?' +'+a.queue.length:''}] `;
+  else if(TRAIN&&TRAIN.running){const pg=TRAIN.progress||{};t=pg.total?`[${Math.round(100*pg.step/pg.total)}%] `:'[training] ';}
+  else if(lastRunning)t='[rendering] ';
+  document.title=t+BASE_TITLE;}
 let P=null, CFG=null, ENGINES=[], POLL=null, lastRunning=false, AITK=null, JUST_LOT=null, TRAIN={active:false}, TRAIN_HIDDEN=null;
 async function api(op,data){const r=await fetch('/api/'+op,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})});return r.json();}
 function say(t,cls){$('status').textContent=t||'';$('status').className=cls||'';}
@@ -333,7 +346,7 @@ function fillAutoEng(cur){const s=$('autoEng');s.innerHTML='<option value="">no 
   if(cur&&![...s.options].some(o=>o.value===cur)){const o=document.createElement('option');o.value=cur;o.textContent=cur+' (not configured)';s.appendChild(o);}s.value=cur||'';}
 $('autoChk').addEventListener('change',runLabel);
 $('runBtn').onclick=async()=>{if(!P)return;
-  if($('autoChk').checked){if(!AITK||!AITK.root)return say('the autopilot needs the AI-Toolkit folder: set it in Settings','err');
+  if($('autoChk').checked){askNotify();if(!AITK||!AITK.root)return say('the autopilot needs the AI-Toolkit folder: set it in Settings','err');
     const a=await api('autopilot_start',{name:P.name,engine:$('engSel').value||undefined});if(!a.ok)return say(a.error,'err');AUTO=a.autopilot;AUTO_HIDDEN=null;renderAuto();say('autopilot started');return poll();}
   const r=await api('run',{name:P.name,engine:$('engSel').value||undefined});
   if(!r.ok)return say(r.error,'err');if(!r.started)return say(r.message,'warn');say(`run started: ${r.total} card(s)`);poll();};
@@ -342,12 +355,17 @@ async function poll(){clearTimeout(POLL);const r=await api('status');const s=r.s
   $('cancelBtn').disabled=!s.running;$('runBtn').disabled=!!s.running;
   $('bar').firstElementChild.style.width=s.total?Math.round(100*s.done/s.total)+'%':'0';
   if(s.text)say((s.running?'':'')+s.text,s.ok===false?'err':'');logLines(s.log);
-  const wasTraining=!!TRAIN.running;TRAIN=r.training||{active:false};if(wasTraining&&!TRAIN.running){renderDoneBar();say(`training ${TRAIN.job}: ${TRAIN.result}`+(TRAIN.lora?`, LoRA in ${TRAIN.lora}`:''),TRAIN.result==='done'?'':'warn');}
+  const wasTraining=!!TRAIN.running;TRAIN=r.training||{active:false};if(wasTraining&&!TRAIN.running){renderDoneBar();if(!AUTO.running)notify(`Training ${TRAIN.job}: ${TRAIN.result}`,TRAIN.lora||TRAIN.log||'');say(`training ${TRAIN.job}: ${TRAIN.result}`+(TRAIN.lora?`, LoRA in ${TRAIN.lora}`:''),TRAIN.result==='done'?'':'warn');}
   if(s.running||lastRunning){if(P&&s.project===P.name){const pr=await api('project_get',{name:P.name});if(pr.ok){P=pr.project;renderCards(s.current);fillRef();projectLabel();}}}
   const ended=!s.running&&lastRunning;lastRunning=!!s.running;
   if(ended){refreshEngines();renderDoneBar();if(datasetComplete()&&s.project===P.name&&!AUTO.running)say(AITK&&AITK.root?'dataset complete: export it, or create the AI-Toolkit job (green bar above the cards)':'dataset complete: export it (green bar above the cards)');}
-  const wasAuto=!!AUTO.running;AUTO=r.autopilot||{};renderAuto();if(wasAuto&&!AUTO.running){refreshEngines();if(P)openProject(P.name);}
-  renderTrain();POLL=setTimeout(poll,AUTO.running?2500:s.running?1500:(TRAIN.running?3000:6000));}
+  const wasAuto=!!AUTO.running;AUTO=r.autopilot||{};renderAuto();
+  const hl=(AUTO.history||[]).length;if(AUTO_HLEN!==null&&hl>AUTO_HLEN){const x=AUTO.history[hl-1];
+    notify(`Autopilot ${x.project}: ${x.ok?'done':'stopped'}`,x.ok?(x.result&&x.result.mean_lora!=null?`LoRA likeness ${x.result.mean_lora} (without ${x.result.mean_base})`:'LoRA trained'):(x.error||''));
+    if(!AUTO.running&&!(AUTO.queue||[]).length&&hl>1)notify('Autopilot queue finished',AUTO.history.map(y=>`${y.project}: ${y.ok?'done':'stopped'}`).join(', '));}
+  AUTO_HLEN=hl;
+  if(wasAuto&&!AUTO.running){refreshEngines();if(P)openProject(P.name);}
+  renderTrain();tabTitle();POLL=setTimeout(poll,AUTO.running?2500:s.running?1500:(TRAIN.running?3000:6000));}
 
 // ---------- cards ----------
 function badge(c){if(c.scored===false&&c.file)return `<span class="badge" title="unscored line: the face model cannot judge it">n/s ${c.score??''}</span>`;if(c.score===null||c.score===undefined)return '';const cls=c.score>=(P.settings.threshold||0)?'ok':(c.score>0?'low':'zero');return `<span class="badge ${cls}">${c.score}</span>`;}
@@ -370,7 +388,7 @@ function openAitk(){if(!P||!AITK||!AITK.root)return;const s=$('aitkPreset');s.in
   $('aitkOut').style.display='none';$('aitkMsg').textContent='';$('aitkGo').disabled=false;$('aitkDlg').showModal();}
 $('doneAitk').onclick=openAitk;
 // ---------- training ----------
-async function launchTrain(job){if(!P)return;say('starting the training...');
+async function launchTrain(job){if(!P)return;askNotify();say('starting the training...');
   let r=await api('aitk_train',{name:P.name,job});
   if(!r.ok&&r.engine_busy){if(!confirm(`The engine '${r.engine_busy}' started by Dataset Studio holds the GPU.\nStop it and start the training?`))return say('training not started','warn');
     r=await api('aitk_train',{name:P.name,job,stop_engine:true});refreshEngines();}
@@ -412,7 +430,7 @@ function renderScores(list){list=(list||[]).slice().sort((a,b)=>(b.final-a.final
   $('scGrid').innerHTML=h.rows.map((r,i)=>fig(r.base,`${i+1} without`)+fig(r.lora,`${i+1} with LoRA`)).join('');}
 $('scTable').addEventListener('click',ev=>{const tr=ev.target.closest('tr[data-k]');if(!tr)return;SC_SEL=tr.dataset.k;renderScores(SC_T.scores);});
 $('scGrid').addEventListener('click',ev=>{if(ev.target.tagName==='IMG')window.open(ev.target.src,'_blank');});
-$('scGo').onclick=async()=>{const files=[...$('scFiles').querySelectorAll('input:checked')].map(x=>x.value);if(!files.length)return $('scTxt').textContent='pick at least one LoRA file';
+$('scGo').onclick=async()=>{askNotify();const files=[...$('scFiles').querySelectorAll('input:checked')].map(x=>x.value);if(!files.length)return $('scTxt').textContent='pick at least one LoRA file';
   $('scGo').disabled=true;const r=await api('lora_score',{name:P.name,job:SC_T.job,files,engine:$('scEng').value,weight:+$('scW').value||1,seed:+$('scSeed').value,baseline:$('scBase').checked,switch_model:$('scSwitch').checked,prompts:$('scPrompts').value});
   if(!r.ok){$('scGo').disabled=false;$('scTxt').textContent=r.error;return;}pollScore();};
 $('scCancel').onclick=()=>api('lora_score_cancel');
@@ -421,6 +439,7 @@ async function pollScore(){clearTimeout(SC_POLL);const r=await api('status');con
   $('scCancel').style.display=s.running?'':'none';$('scGo').disabled=!!s.running||!(SC_T&&SC_T.loras.length);
   $('scTxt').textContent=s.running?`${s.done}/${s.total}: ${s.text}`:(s.ok?'done: '+s.text:(s.error?'stopped: '+s.error:''));
   if(SC_T&&(s.running||SC_WAS)){const t=await api('lora_targets',{name:P.name,job:SC_T.job});if(t.ok){SC_T=t;renderScores(t.scores);}}
+  if(SC_WAS&&!s.running&&!AUTO.running)notify('LoRA score: '+(s.ok?'done':'stopped'),s.ok?s.text:(s.error||''));
   SC_WAS=!!s.running;if(s.running||$('scoreDlg').open)SC_POLL=setTimeout(pollScore,s.running?2000:5000);}
 $('doneScore').onclick=()=>openScore(P&&P.last_aitk?P.last_aitk.job:undefined);
 $('trainScore').onclick=()=>openScore(TRAIN.job);
@@ -444,7 +463,7 @@ $('autoLog').onclick=()=>{const t=$('autoTail');t.style.display=t.style.display=
 $('queueBtn').onclick=async()=>{const r=await api('projects');const l=$('queueList');
   l.innerHTML=(r.projects||[]).map(p=>`<div class="row"><label style="min-width:0"><input type="checkbox" value="${esc(p.name)}" ${p.has_reference?'':'disabled'}> ${esc(p.name)}</label><small>${p.done}/${p.cards} card(s)${p.has_reference?'':', no reference photo'}</small></div>`).join('')||'<small>no project</small>';
   $('queueMsg').textContent=AITK&&AITK.root?'':'set the AI-Toolkit folder in Settings first';$('queueDlg').showModal();};
-$('queueGo').onclick=async()=>{const names=[...$('queueList').querySelectorAll('input:checked')].map(x=>x.value);if(!names.length)return $('queueMsg').textContent='tick at least one project';
+$('queueGo').onclick=async()=>{askNotify();const names=[...$('queueList').querySelectorAll('input:checked')].map(x=>x.value);if(!names.length)return $('queueMsg').textContent='tick at least one project';
   const r=await api('autopilot_queue',{names});if(!r.ok){$('queueMsg').textContent=r.error;return;}$('queueDlg').close();AUTO=r.autopilot;AUTO_HIDDEN=null;renderAuto();say(`autopilot queue: ${names.length} project(s)`);poll();};
 $('trainLog').onclick=()=>{const t=$('trainTail');t.style.display=t.style.display==='none'?'':'none';t.scrollTop=1e9;};
 $('trainHide').onclick=()=>{TRAIN_HIDDEN=TRAIN.job+':'+TRAIN.started;renderTrain();};

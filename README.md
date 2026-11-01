@@ -84,6 +84,19 @@ reason, shown in the violet panel and the log. Cancel stops the step in flight. 
 Dataset Studio is restarted during the training (which keeps going), the chain picks
 up there (`logs/autopilot.json`).
 
+Safeguards for a run nobody watches:
+- a gated base (FLUX.2-klein-base-9B) is checked with `HfApi().auth_check` in
+  ai-toolkit's own interpreter BEFORE the first card is rendered (Autopilot, Queue)
+  or the training starts: no access stops it at once with the fix (accept the
+  licence with the account whose token is on this PC); a check that cannot run
+  (offline) is said in the log and does not block;
+- the LoRA copied into an engine carries the project's trigger word in its
+  metadata (`trigger_words`, read by crispz-klein as the LoRA's keywords) and its
+  origin (`crispz_dataset_studio`); ai-toolkit's own file is left untouched;
+- a browser notification when a training, a LoRA score, an autopilot project or the
+  whole queue ends (allowed on the first click that starts one), and the tab title
+  shows the step in flight.
+
 "Queue" runs the autopilot on several projects, one after the other, each with the
 settings of its own Autopilot box: a night batch. A project that fails is recorded
 with its reason and the next one starts; "Cancel all" also empties the queue. The
