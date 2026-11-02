@@ -25,7 +25,9 @@ nothing is skipped silently. Cancel stops the step in flight (the run, the train
 the scoring). The chain is written to logs/autopilot.json: when Dataset Studio is
 restarted during the training (which is detached and keeps going), the chain picks up
 at the training and goes on to the score; any other step interrupted that way is
-reported as such.
+marked "interrupted" and the panel offers Resume (resume()), which restarts the chain
+at that step with the rest of the queue (2026-11-02: a restart during prj11's dataset
+left the queue prj12, prj13 stranded and the step shown as "running").
 """
 
 import os
@@ -69,9 +71,16 @@ class Autopilot:
         self.save_lock = threading.RLock()
         self.state = self._load()
         if self.state.get("running"):
-            # the previous process died with the chain in flight
+            # the previous process died with the chain in flight: the step it was on
+            # is not "running" any more, it was cut (shown as such, Resume offered)
             self.state["running"] = False
-            self.state["interrupted"] = self.state.get("step")
+            cut = self.state.get("step") or "dataset"
+            self.state["interrupted"] = cut
+            steps = self.state.setdefault("steps", {})
+            if steps.get(cut) == "running":
+                steps[cut] = "interrupted"
+            self.state["text"] = f"cut at the {cut} by a restart of Dataset Studio: Resume goes on"
+            self._save()
 
     # -- persistence ------------------------------------------------------------
     def _load(self):
@@ -160,6 +169,7 @@ class Autopilot:
                           "steps": dict(prev.get("steps") or {k: "pending" for k in STEPS}),
                           "log": list(prev.get("log") or []), "started": prev.get("started") or time.time(),
                           "finished": None, "job": prev.get("job"), "result": prev.get("result"),
+                          "lot": prev.get("lot"),
                           "queue": queue if queue is not None else list(prev.get("queue") or []),
                           "history": history if history is not None else list(prev.get("history") or [])}
             if resume_at:
@@ -170,10 +180,34 @@ class Autopilot:
             self.thread.start()
             return self.status()
 
+    def resume(self, studio):
+        """Restarts a chain cut by a restart of Dataset Studio at the step it was on,
+        with the same project, settings and the rest of its queue. The dataset step
+        renders only the cards not done yet; the training step relaunches the job,
+        which ai-toolkit resumes from its last save."""
+        st = self.state
+        cut = st.get("interrupted")
+        if st.get("running"):
+            raise RuntimeError("the autopilot is already running")
+        if not cut or not st.get("project"):
+            raise ValueError("nothing to resume: no chain was cut by a restart")
+        if cut == "training" and not st.get("job"):
+            cut = "job"                          # no job was written yet
+        if cut == "job" and st.get("job"):
+            cut = "training"                     # the job exists: no second _v2
+        _log(f"resuming '{st['project']}' at the {cut}"
+             + (f", then {len(st.get('queue') or [])} queued project(s)" if st.get("queue") else ""))
+        return self.start(studio, st["project"], resume_at=cut)
+
     def cancel(self, studio, all_=False):
         if not self.state.get("running"):
-            if all_ and self.state.get("queue"):
+            if all_ and (self.state.get("queue") or self.state.get("interrupted")):
+                # a cut chain: dropped with its queue, Resume is no longer offered
                 self.state["queue"] = []
+                if self.state.get("interrupted"):
+                    self.state["steps"][self.state["interrupted"]] = "cancelled"
+                    self.state["interrupted"] = None
+                    self.state["text"] = "dropped after the restart"
                 self._save()
                 return True
             return False

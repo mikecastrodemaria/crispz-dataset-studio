@@ -52,7 +52,9 @@ Ops:
                                         (the project's auto_* settings)
   autopilot_queue {names: [...]}        the autopilot on several projects, one after
                                         the other (each with its own auto_* settings)
-  autopilot_cancel {all?}               all: also empty the queue
+  autopilot_resume {}                   restart a chain cut by a restart, at its step,
+                                        with the rest of its queue
+  autopilot_cancel {all?}               all: also empty the queue (or drop a cut chain)
   status {} also carries 'training', 'lora_score' and 'autopilot' (job, progress, log tail, result)
 """
 
@@ -147,7 +149,8 @@ class Studio:
                 log(f"autopilot: cannot resume: {e}")
         else:
             log(f"autopilot: the chain of '{st.get('project')}' was cut at the {cut} by a "
-                f"restart; Run again to go on")
+                f"restart" + (f" ({len(st.get('queue') or [])} more project(s) queued)"
+                             if st.get("queue") else "") + ": Resume in the panel goes on")
     # -- helpers --------------------------------------------------------------
     def _project(self, data):
         name = data.get("name")
@@ -556,6 +559,14 @@ class Studio:
         log(f"autopilot: '{p['name']}' started ({opts['preset']}, {opts['steps']} steps, "
             f"score on {opts['score_engine'] or 'none'})")
         return {"autopilot": st}
+
+    def op_autopilot_resume(self, data):
+        ap = ds_autopilot.autopilot()
+        st = ap.status()
+        self._autopilot_guard()
+        p = ds_project.load(st.get("project") or "")
+        self._gate_check([st.get("opts") or self._autopilot_opts(p)])
+        return {"autopilot": ap.resume(self)}
 
     def op_autopilot_cancel(self, data):
         return {"cancelled": ds_autopilot.autopilot().cancel(self, all_=bool(data.get("all")))}
