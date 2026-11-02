@@ -37,15 +37,99 @@ def _log(msg):
 # The recipes of the report of 2026-10-31 (rank 16, adamw8bit, lr 1e-4, sigmoid,
 # 1500 steps, samples every 250 at 832x1216). 4B: 17 GB of VRAM, 24 min on a 5090.
 # 9B: transformer in qfloat8, 24 GB, 50 min; its base repo is gated on Hugging Face.
+# Klein 4B / 9B: the recipe of the report of 2026-10-31, measured on the 5090.
+# The others (2026-11-02) take the defaults ai-toolkit's own UI sets for that model
+# (extensions_built_in/diffusion_models/ui.tsx, version of 2026-10-31): model repo,
+# quantization, timestep type, sampler, sample steps and guidance, training adapters.
+# They are marked untested until a training on the 5090 confirms them.
+# "engine" = the crispz app the LoRA is scored in (matched against the engines of
+# Settings by name or install folder); "switch" = the checkpoint that engine must run.
+_SAMPLE = {"sampler": "flowmatch", "width": 1024, "height": 1024, "guidance": 4, "steps": 25}
 PRESETS = {
     "klein4b": {"label": "FLUX.2 Klein 4B (base, free)", "arch": "flux2_klein_4b",
                 "name_or_path": "black-forest-labs/FLUX.2-klein-base-4B",
-                "quantize": False, "note": "about 17 GB of VRAM, 0.8 s per step on a 5090"},
+                "model": {"quantize": False, "quantize_te": True},
+                "sample": dict(_SAMPLE, width=832, height=1216),
+                "tested": True, "engine": "crispz-klein",
+                "note": "about 17 GB of VRAM, 0.8 s per step on a 5090"},
     "klein9b": {"label": "FLUX.2 Klein 9B (base, gated on HF)", "arch": "flux2_klein_9b",
                 "name_or_path": "black-forest-labs/FLUX.2-klein-base-9B",
-                "quantize": True, "gated": True,
+                "model": {"quantize": True, "qtype": "qfloat8", "quantize_te": True},
+                "sample": dict(_SAMPLE, width=832, height=1216),
+                "gated": True, "tested": True, "engine": "crispz-klein",
                 "note": "about 24 GB of VRAM, 1.6 s per step; accept the licence on the "
                         "HF page with the account whose token is on this PC"},
+    "flux3": {"label": "FLUX.3 Image Klein (base, gated)", "arch": "flux3",
+              "name_or_path": "black-forest-labs/flux-3-image-klein-base",
+              "model": {"quantize": True, "qtype": "convrot8", "quantize_te": True,
+                        "qtype_te": "convrot8", "low_vram": True,
+                        "model_kwargs": {"match_target_res": True}},
+              "train": {"timestep_type": "shift"},
+              "sample": dict(_SAMPLE, guidance=3.5, steps=28),
+              "gated": True, "engine": "crispz-flux3",
+              "note": "trained on the base, used on the distilled model in crispz-flux3; "
+                      "FLUX Kommunity licence"},
+    "zimage_turbo": {"label": "Z-Image Turbo (training adapter)", "arch": "zimage",
+                     "name_or_path": "Tongyi-MAI/Z-Image-Turbo",
+                     "model": {"quantize": True, "qtype": "qfloat8", "quantize_te": True,
+                               "low_vram": True, "assistant_lora_path":
+                               "ostris/zimage_turbo_training_adapter/"
+                               "zimage_turbo_training_adapter_v2.safetensors"},
+                     "train": {"timestep_type": "weighted", "unload_text_encoder": False},
+                     "sample": dict(_SAMPLE, guidance=1, steps=9),
+                     "engine": "crispz-studio",
+                     "note": "for crispz-studio's Z-Image Turbo; the adapter keeps the LoRA "
+                             "from undoing the distillation"},
+    "qwen_image": {"label": "Qwen-Image", "arch": "qwen_image",
+                   "name_or_path": "Qwen/Qwen-Image",
+                   "model": {"quantize": True, "qtype": "qfloat8", "quantize_te": True,
+                             "low_vram": True},
+                   "train": {"timestep_type": "weighted"},
+                   "sample": dict(_SAMPLE),
+                   "engine": "crispz-qwen-edit",
+                   "note": "for crispz-qwen-edit's txt2img (Qwen-Image base); a large model, "
+                           "quantized to 8 bits"},
+    "krea": {"label": "FLUX.1 Krea dev (gated)", "arch": "flux",
+             "name_or_path": "black-forest-labs/FLUX.1-Krea-dev",
+             "model": {"quantize": True, "quantize_te": True},
+             "train": {},
+             "sample": dict(_SAMPLE),
+             "gated": True, "engine": "crispz-krea",
+             "note": "for crispz-krea; FLUX.1 dev non-commercial licence"},
+    "krea2_turbo": {"label": "Krea 2 Turbo (training adapter, gated)", "arch": "krea2",
+                    "name_or_path": "krea/Krea-2-Turbo",
+                    "model": {"quantize": True, "quantize_te": True, "low_vram": True,
+                              "assistant_lora_path":
+                              "ostris/krea2_turbo_training_adapter/"
+                              "krea2_turbo_training_adapter_v1.safetensors"},
+                    "train": {"timestep_type": "linear"},
+                    "sample": dict(_SAMPLE, guidance=1, steps=9),
+                    "gated": True, "engine": "crispz-krea2",
+                    "note": "for crispz-krea2's Krea 2 Turbo"},
+    # SDXL family: trained on the checkpoint the LoRA will be used with (Illustrious,
+    # Pony... drifted too far from SDXL base for a base LoRA to hold), given as a
+    # .safetensors path or a HF repo (sdxl_checkpoint); empty = SDXL base. Those
+    # anime checkpoints learnt on tags: caption the dataset with "Ollama tags".
+    "sdxl": {"label": "SDXL checkpoint (Illustrious, Pony...)", "arch": "sdxl",
+             "name_or_path": "stabilityai/stable-diffusion-xl-base-1.0", "checkpoint": True,
+             "model": {"quantize": False, "quantize_te": False},
+             "train": {"noise_scheduler": "ddpm", "timestep_type": None},
+             "sample": dict(_SAMPLE, sampler="ddpm", guidance=6),
+             "engine": "crispz-sdxl",
+             "note": "give the checkpoint (an Illustrious or Pony .safetensors, empty = SDXL "
+                     "base) and caption with Ollama tags; no crispz SDXL engine yet, so no "
+                     "score, and ArcFace is unreliable on anime faces anyway"},
+    "ideogram4": {"label": "Ideogram 4 (experimental, gated)", "arch": "ideogram4",
+                  "name_or_path": "ideogram-ai/ideogram-4-fp8",
+                  "model": {"quantize": True, "quantize_te": True, "low_vram": True,
+                            "unconditional_lora_path":
+                            "ostris/ideogram_4_unconditional_lora/"
+                            "ideogram_4_unconditional_lora_r16.safetensors"},
+                  "train": {"timestep_type": "linear"},
+                  "sample": dict(_SAMPLE),
+                  "gated": True, "engine": "crispz-ideogram",
+                  "note": "experimental in ai-toolkit; Ideogram 4 learnt on JSON captions and "
+                          "the dataset's are plain text; non-commercial licence"},
 }
 DEFAULT_PRESET = "klein4b"
 DEFAULT_STEPS = 1500
@@ -95,7 +179,10 @@ def status(cfg):
     raw = (cfg or {}).get("ai_toolkit_dir") or ""
     root = find_root(raw) if raw else None
     out = {"configured": bool(str(raw).strip()), "setting": raw, "root": root,
-           "presets": [{"name": k, "label": v["label"], "note": v["note"]} for k, v in PRESETS.items()],
+           "presets": [{"name": k, "label": v["label"], "note": v["note"],
+                        "tested": bool(v.get("tested")), "engine": v.get("engine"),
+                        "score_engine": engine_for_preset(k, (cfg or {}).get("engines"))}
+                       for k, v in PRESETS.items()],
            "default_preset": DEFAULT_PRESET, "default_steps": DEFAULT_STEPS}
     if raw and not root:
         out["error"] = (f"no ai-toolkit found from '{raw}': point the setting at the folder "
@@ -104,6 +191,49 @@ def status(cfg):
         out["datasets_dir"] = datasets_dir(root, cfg)
         out["python"] = python_for(root)
     return out
+
+
+# Engine names people give in Settings for each family app (the install folder's
+# name, crispz-<x>, always matches too).
+_ENGINE_ALIASES = {"crispz-studio": ("studio", "zimage", "z-image", "crispz-zimage"),
+                   "crispz-qwen-edit": ("qwen-edit", "qwen", "qwen-image"),
+                   "crispz-klein": ("klein",), "crispz-flux3": ("flux3",),
+                   "crispz-krea": ("krea",), "crispz-krea2": ("krea2",),
+                   "crispz-sdxl": ("sdxl",), "crispz-ideogram": ("ideogram",)}
+
+
+def engine_for_preset(preset, engines):
+    """The engine of Settings that runs the preset's model (its crispz app), by
+    install folder name first, then by engine name; None when none is configured."""
+    app = (PRESETS.get(preset) or {}).get("engine") or ""
+    if not app:
+        return None
+    names = {app, app[len("crispz-"):]} | set(_ENGINE_ALIASES.get(app, ()))
+    engines = engines or {}
+    for name, ec in engines.items():
+        d = os.path.basename(os.path.normpath(str((ec or {}).get("dir") or ""))).lower()
+        if d == app:
+            return name
+    for name in engines:
+        if name.lower() in names:
+            return name
+    return None
+
+
+def preset_of_job(root, job):
+    """The preset a job's config was written with (its base model), else None."""
+    try:
+        with open(os.path.join(root, "config", job + ".yaml"), encoding="utf-8") as fh:
+            m = re.search(r'^\s*name_or_path:\s*"?([^"\n]+)"?', fh.read(), re.M)
+    except OSError:
+        return None
+    repo = m.group(1).strip() if m else ""
+    hit = next((k for k, v in PRESETS.items() if v["name_or_path"] == repo), None)
+    if hit:
+        return hit
+    # a preset on the user's own checkpoint (SDXL): found by its architecture
+    arch = job_arch(root, job)
+    return next((k for k, v in PRESETS.items() if v.get("checkpoint") and v["arch"] == arch), None)
 
 
 def datasets_dir(root, cfg=None):
@@ -147,11 +277,22 @@ def _path(p):
     return str(p).replace("\\", "/")
 
 
-def build_config(job, dataset_path, preset, steps, trigger, sample_prompts, resolutions):
+def _yaml_kv(key, value, indent):
+    pad = " " * indent
+    if isinstance(value, dict):
+        return [f"{pad}{key}:"] + [l for k, v in value.items() for l in _yaml_kv(k, v, indent + 2)]
+    return [f"{pad}{key}: {_q(value)}"]
+
+
+def build_config(job, dataset_path, preset, steps, trigger, sample_prompts, resolutions,
+                 name_or_path=None):
     pr = PRESETS[preset]
+    tr = dict({"noise_scheduler": "flowmatch", "timestep_type": "sigmoid"}, **pr.get("train", {}))
+    sm = dict(_SAMPLE, **pr.get("sample", {}))
     lines = [
         "# Written by crispz-dataset-studio. Run from the ai-toolkit folder:",
         f"#   python run.py config/{job}.yaml",
+        f"# Preset: {pr['label']}" + ("" if pr.get("tested") else " (not tested yet on the 5090)"),
         "job: extension",
         "config:",
         f"  name: {_q(job)}",
@@ -182,25 +323,29 @@ def build_config(job, dataset_path, preset, steps, trigger, sample_prompts, reso
         "        train_unet: true",
         "        train_text_encoder: false",
         "        gradient_checkpointing: true",
-        "        noise_scheduler: \"flowmatch\"",
-        "        timestep_type: \"sigmoid\"",
+        f"        noise_scheduler: {_q(tr['noise_scheduler'])}",
+    ]
+    if tr.get("timestep_type"):
+        lines.append(f"        timestep_type: {_q(tr['timestep_type'])}")
+    for k, v in tr.items():
+        if k not in ("noise_scheduler", "timestep_type"):
+            lines += _yaml_kv(k, v, 8)
+    lines += [
         "        optimizer: \"adamw8bit\"",
         "        lr: 1e-4",
         "        dtype: \"bf16\"",
         "      model:",
-        f"        name_or_path: {_q(pr['name_or_path'])}",
+        f"        name_or_path: {_q(_path(name_or_path or pr['name_or_path']))}",
         f"        arch: {_q(pr['arch'])}",
-        f"        quantize: {_q(pr['quantize'])}",
     ]
-    if pr["quantize"]:
-        lines.append("        qtype: \"qfloat8\"")
+    for k, v in pr.get("model", {}).items():
+        lines += _yaml_kv(k, v, 8)
     lines += [
-        "        quantize_te: true",
         "      sample:",
-        "        sampler: \"flowmatch\"",
+        f"        sampler: {_q(sm['sampler'])}",
         "        sample_every: 250",
-        "        width: 832",
-        "        height: 1216",
+        f"        width: {int(sm['width'])}",
+        f"        height: {int(sm['height'])}",
         "        prompts:",
     ]
     lines += [f"          - {_q(s)}" for s in sample_prompts]
@@ -208,8 +353,8 @@ def build_config(job, dataset_path, preset, steps, trigger, sample_prompts, reso
         "        neg: \"\"",
         "        seed: 42",
         "        walk_seed: true",
-        "        guidance_scale: 4",
-        "        sample_steps: 25",
+        f"        guidance_scale: {_q(sm['guidance'])}",
+        f"        sample_steps: {int(sm['steps'])}",
         "meta:",
         f"  name: {_q(job)}",
         "  version: \"1.0\"",
@@ -230,7 +375,21 @@ def _sample_prompts(captions, trigger, n=4):
     return caps
 
 
-def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
+def checkpoint_for(preset, checkpoint):
+    """The model a preset trains on: the user's checkpoint for the presets that take
+    one (a local .safetensors must exist, a HF repo id is passed as is)."""
+    pr = PRESETS[preset]
+    c = str(checkpoint or "").strip().strip('"')
+    if not pr.get("checkpoint") or not c:
+        return pr["name_or_path"]
+    local = c.lower().endswith((".safetensors", ".ckpt")) or "\\" in c or c[1:3] == ":/" \
+        or c.startswith(("/", "."))
+    if local and not os.path.isfile(os.path.expanduser(c)):
+        raise FileNotFoundError(f"checkpoint not found: {c}")
+    return c
+
+
+def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None, checkpoint=None):
     """Copies the lot into ai-toolkit's datasets folder and writes the job config.
     Returns {job, root, dataset_dir, config_path, command, pairs, preset, warnings}."""
     root = find_root((cfg or {}).get("ai_toolkit_dir"))
@@ -243,6 +402,7 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
     steps = int(steps or DEFAULT_STEPS)
     if not 50 <= steps <= 100000:
         raise ValueError("steps must be between 50 and 100000")
+    model_path = checkpoint_for(preset, checkpoint)
     if not lot_dir or not os.path.isdir(lot_dir):
         raise FileNotFoundError(f"export folder not found: {lot_dir}")
     images = sorted(f for f in os.listdir(lot_dir) if f.lower().endswith(IMAGE_EXTS))
@@ -281,7 +441,8 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
         trigger = trig
     size = int(s.get("export_size") or 1024)
     res = [r for r in (512, 768, 1024) if r <= size] or [512]
-    text = build_config(job, dst, preset, steps, trigger, _sample_prompts(captions, trig), res)
+    text = build_config(job, dst, preset, steps, trigger, _sample_prompts(captions, trig), res,
+                        name_or_path=model_path)
     cfg_path = os.path.join(root, "config", job + ".yaml")
     with open(cfg_path, "w", encoding="utf-8") as fh:
         fh.write(text)
@@ -293,6 +454,16 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
         command = f'cd /d "{root}" && set PYTHONUTF8=1 && "{py}" run.py config/{job}.yaml'
     else:
         command = f'cd "{root}" && PYTHONUTF8=1 "{py}" run.py config/{job}.yaml'
+    if PRESETS[preset].get("checkpoint"):
+        if model_path == PRESETS[preset]["name_or_path"]:
+            warnings.append("no checkpoint given: trained on SDXL base; for Illustrious or "
+                            "Pony give their .safetensors (a base LoRA holds badly on them)")
+        if (s.get("caption_source") or "prompt") != "tags":
+            warnings.append("the captions are sentences: Illustrious and Pony learnt on tags, "
+                            "caption with 'Ollama tags' and Re-caption before the job")
+    if not PRESETS[preset].get("tested"):
+        warnings.append(f"{PRESETS[preset]['label']}: preset not tested yet on the 5090 "
+                        f"(ai-toolkit's own defaults)")
     if PRESETS[preset]["name_or_path"].endswith("9B"):
         warnings.append("FLUX.2-klein-base-9B is gated: accept its licence on Hugging Face "
                         "with the account whose token is on this PC before training")
@@ -301,6 +472,7 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
     for w in warnings:
         _log(f"job '{job}': {w}")
     return {"job": job, "root": root, "dataset_dir": dst, "config_path": cfg_path,
+            "model": model_path,
             "command": command, "pairs": len(images), "preset": preset, "steps": steps,
             "warnings": warnings}
 

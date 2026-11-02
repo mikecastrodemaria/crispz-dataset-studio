@@ -7,6 +7,10 @@ Three sources, chosen per project ("caption_source"):
               service the family's Describe uses. keep_alive 0 by default: the GPU is
               shared with the drawing engine, the LLM must not stay resident.
   "both"    : the prompt line, then the Ollama description after a comma.
+  "tags"    : Danbooru-style tags from the same Ollama vision model ("1girl, red hair,
+              green eyes, smiling, ..."), for the SDXL anime checkpoints (Illustrious,
+              Pony) that learnt on tags, not sentences (2026-11-02). An optional
+              tag_prefix goes after the trigger word (Pony's "score_9, score_8_up").
 
 Trigger word: prepended to every caption when set ("ohwx woman, ..."), the kohya /
 ai-toolkit convention. Never raises: {ok, caption} or {ok: false, error, caption}
@@ -21,6 +25,29 @@ DEFAULT_URL = "http://127.0.0.1:11434"
 DESCRIBE = ("Describe this image for an image-generation training caption: one line, "
             "comma-separated phrases, concrete and visual (framing, pose, expression, "
             "clothing, setting, lighting). No names, no opinions, no preamble.")
+
+
+TAGS = ("List Danbooru-style tags for this image, for an anime image-generation training "
+        "caption: lowercase, comma-separated, spaces instead of underscores. Start with "
+        "the count tag (1girl, 1boy, solo...), then hair, eyes, expression, clothing, pose, "
+        "framing (portrait, upper body, full body...), background and lighting. Only "
+        "visible things. No sentences, no names, no quality or rating tags, no preamble.")
+
+
+def normalize_tags(text, max_words=5):
+    """A tag line from a model answer: lowercase, spaces for underscores, no
+    duplicates, no sentence a model slipped in (more than max_words words)."""
+    import re
+    out, seen = [], set()
+    for t in re.split(r"[,\n]+", text or ""):
+        if ":" in t:
+            t = t.rsplit(":", 1)[1]          # "here are the tags: 1girl" -> "1girl"
+        t = " ".join(t.replace("_", " ").strip(" .;:-*#\"'").lower().split())
+        if not t or len(t.split()) > max_words or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return ", ".join(out)
 
 
 def _strip_thinking(text):
@@ -126,13 +153,22 @@ def describe(image_path, cfg, timeout=180, prompt=None):
     return {"ok": True, "caption": text, "model": model}
 
 
-def compose(prompt, trigger="", source="prompt", described=None):
+def compose(prompt, trigger="", source="prompt", described=None, tag_prefix=""):
     """The final caption line from its parts."""
     parts = []
     t = (trigger or "").strip()
     if t:
         parts.append(t)
     p = " ".join((prompt or "").split())
+    if source == "tags":
+        if described:
+            pre = (tag_prefix or "").strip().strip(",").strip()
+            if pre:
+                parts.append(pre)
+            parts.append(described.strip())
+        elif p:
+            parts.append(p)      # fallback, the caller logs why
+        return ", ".join(parts)
     if source in ("prompt", "both") and p:
         parts.append(p)
     if source in ("ollama", "both") and described:
@@ -147,12 +183,17 @@ def caption_for(image_path, prompt, project_cfg, ollama_cfg):
     source = (project_cfg or {}).get("caption_source") or "prompt"
     trigger = (project_cfg or {}).get("trigger_word") or ""
     described, warning = None, None
-    if source in ("ollama", "both"):
-        r = describe(image_path, ollama_cfg)
-        if r.get("ok"):
+    if source in ("ollama", "both", "tags"):
+        r = describe(image_path, ollama_cfg, prompt=TAGS if source == "tags" else None)
+        if r.get("ok") and source == "tags":
+            described = normalize_tags(r["caption"]) or None
+            if not described:
+                warning = "caption fell back to the prompt line: the model gave no usable tag"
+        elif r.get("ok"):
             described = r["caption"]
         else:
             warning = f"caption fell back to the prompt line: {r.get('error')}"
-    return {"caption": compose(prompt, trigger, source, described),
-            "source_used": "ollama" if described else "prompt",
+    return {"caption": compose(prompt, trigger, source, described,
+                               (project_cfg or {}).get("tag_prefix") or ""),
+            "source_used": ("tags" if source == "tags" else "ollama") if described else "prompt",
             "warning": warning}
