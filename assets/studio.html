@@ -53,7 +53,7 @@ dialog::backdrop{background:#000a}dialog h3{margin:0 0 10px}
 small{color:var(--mut)}
 #doneBar{display:none;align-items:center;gap:8px;flex-wrap:wrap;border-color:var(--ok)}#doneBar b{color:var(--ok)}
 #autoBar{display:none;border-color:#a970ff}#autoBar .st{display:inline-block;padding:2px 8px;border-radius:10px;margin:2px 4px 2px 0;font-size:11px;border:1px solid var(--line);color:var(--mut)}
-#autoBar .st.running{border-color:#a970ff;color:var(--fg)}#autoBar .st.done{border-color:var(--ok);color:var(--ok)}#autoBar .st.failed,#autoBar .st.cancelled{border-color:var(--bad);color:var(--bad)}#autoBar .st.skipped{opacity:.6}
+#autoBar .st.running{border-color:#a970ff;color:var(--fg)}#autoBar .st.done{border-color:var(--ok);color:var(--ok)}#autoBar .st.failed,#autoBar .st.cancelled{border-color:var(--bad);color:var(--bad)}#autoBar .st.skipped{opacity:.6}#autoBar .st.interrupted{border-color:var(--warn);color:var(--warn)}
 #autoBar pre{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--mut);max-height:160px;overflow:auto;white-space:pre-wrap;margin:6px 0 0}
 #trainBar{display:none;border-color:var(--acc)}#trainBar .tb{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:6px 0}#trainBar .tb i{display:block;height:100%;background:var(--acc);width:0;transition:width .5s}
 #scoreDlg{max-width:980px;max-height:92vh;overflow:auto}.sc-t{width:100%;border-collapse:collapse;font-size:12px}.sc-t td,.sc-t th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left}.sc-t tr.sel{background:#4f8cff22}.sc-t tr{cursor:pointer}
@@ -128,7 +128,7 @@ small{color:var(--mut)}
 <section class="grid">
   <div class="box" id="doneBar"><b id="doneTxt">Dataset complete</b><span style="flex:1"></span>
     <button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><button id="doneLora">Copy LoRA</button><button id="doneScore">Score LoRA</button><small id="doneHint"></small></div>
-  <div class="box" id="autoBar"><div class="row" style="margin:0"><b id="autoTxt"></b><span style="flex:1"></span><button id="autoLog">Log</button><button id="autoCancel" class="danger">Cancel</button><button id="autoCancelAll" class="danger">Cancel all</button><button id="autoHide">Hide</button></div>
+  <div class="box" id="autoBar"><div class="row" style="margin:0"><b id="autoTxt"></b><span style="flex:1"></span><button id="autoLog">Log</button><button id="autoResume" class="primary" title="Go on from the step the restart cut, with the rest of the queue">Resume</button><button id="autoCancel" class="danger">Cancel</button><button id="autoCancelAll" class="danger">Cancel all</button><button id="autoHide">Hide</button></div>
     <div id="autoSteps2"></div><small id="autoSub"></small><div id="autoHist"></div><pre id="autoTail" style="display:none"></pre></div>
   <div class="box" id="trainBar"><div class="row" style="margin:0"><b id="trainTxt"></b><span style="flex:1"></span><button id="trainLog">Log</button><button id="trainLora" class="primary">Copy LoRA</button><button id="trainScore">Score LoRA</button><button id="trainStop" class="danger">Stop training</button><button id="trainHide">Hide</button></div>
     <div class="tb"><i></i></div><small id="trainSub"></small><pre id="trainTail" style="display:none"></pre></div>
@@ -454,15 +454,18 @@ $('trainLora').onclick=()=>openLora(TRAIN.job);
 const STEP_LABEL={dataset:'1 dataset',export:'2 export',job:'3 AI-Toolkit job',training:'4 training',score:'5 LoRA score'};
 function renderAuto(){const a=AUTO||{};const key=(a.project||'')+':'+(a.started||'');const show=!!a.project&&(a.running||AUTO_HIDDEN!==key);$('autoBar').style.display=show?'block':'none';
   if(a.running){$('runBtn').disabled=true;}if(!show)return;
-  const q=a.queue||[],h=a.history||[];
-  $('autoTxt').textContent=(a.running?'Autopilot: ':(a.ok?'Autopilot finished: ':'Autopilot stopped: '))+a.project+(q.length||h.length>1?` (queue: ${h.length+(a.running?1:0)}/${h.length+q.length+(a.running?1:0)})`:'');
+  const q=a.queue||[],h=a.history||[];const cut=!a.running&&!!a.interrupted;const cur=(a.running||cut)?1:0;
+  $('autoTxt').textContent=(a.running?'Autopilot: ':cut?'Autopilot interrupted: ':(a.ok?'Autopilot finished: ':'Autopilot stopped: '))+a.project+(q.length||h.length>1?` (queue: ${h.length+cur}/${h.length+q.length+cur})`:'');
   $('autoSteps2').innerHTML=Object.entries(a.steps||{}).map(([k,v])=>`<span class="st ${v}">${STEP_LABEL[k]||k}: ${v}</span>`).join('');
-  $('autoSub').textContent=(a.text||'')+(a.interrupted?` (cut at the ${a.interrupted} by a restart)`:'')+(q.length?` · next: ${q.map(x=>x[0]).join(', ')}`:'');
+  $('autoSub').textContent=(a.text||'')+(q.length?` · next: ${q.map(x=>x[0]).join(', ')}`:'');
   $('autoHist').innerHTML=h.length>1||(!a.running&&q.length===0&&h.length>1)?'<small>'+h.map(x=>`${esc(x.project)}: ${x.ok?'done'+(x.result&&x.result.mean_lora!=null?`, likeness ${x.result.mean_lora} (without ${x.result.mean_base})`:''):'stopped, '+esc(x.error||'')}`).join('<br>')+'</small>':'';
-  $('autoCancel').style.display=a.running?'':'none';$('autoCancelAll').style.display=a.running&&q.length?'':'none';$('autoHide').style.display=a.running?'none':'';
+  $('autoCancel').style.display=a.running?'':'none';$('autoResume').style.display=cut?'':'none';
+  $('autoCancelAll').style.display=(a.running&&q.length)||cut?'':'none';$('autoCancelAll').textContent=cut?'Drop':'Cancel all';$('autoHide').style.display=a.running?'none':'';
   $('autoTail').textContent=(a.log||[]).join('\n');}
 $('autoCancel').onclick=async()=>{if(!confirm(`Cancel the autopilot on ${AUTO.project}? The step in flight stops (a training keeps its saves).`+((AUTO.queue||[]).length?' The queue goes on with the next project.':'')))return;await api('autopilot_cancel');poll();};
-$('autoCancelAll').onclick=async()=>{if(!confirm('Cancel the project in flight AND the rest of the queue?'))return;await api('autopilot_cancel',{all:true});poll();};
+$('autoCancelAll').onclick=async()=>{const cut=!AUTO.running&&AUTO.interrupted;if(!confirm(cut?`Drop the interrupted chain of ${AUTO.project}`+((AUTO.queue||[]).length?` and the ${AUTO.queue.length} queued project(s)`:'')+'? Nothing already rendered or trained is deleted.':'Cancel the project in flight AND the rest of the queue?'))return;await api('autopilot_cancel',{all:true});poll();};
+$('autoResume').onclick=async()=>{askNotify();$('autoResume').disabled=true;const r=await api('autopilot_resume');$('autoResume').disabled=false;
+  if(!r.ok)return say(r.error,'err');AUTO=r.autopilot;AUTO_HIDDEN=null;renderAuto();say(`autopilot resumed: ${AUTO.project} at the ${AUTO.step}`);poll();};
 $('autoHide').onclick=()=>{AUTO_HIDDEN=(AUTO.project||'')+':'+(AUTO.started||'');renderAuto();};
 $('autoLog').onclick=()=>{const t=$('autoTail');t.style.display=t.style.display==='none'?'':'none';t.scrollTop=1e9;};
 $('queueBtn').onclick=async()=>{const r=await api('projects');const l=$('queueList');

@@ -554,6 +554,60 @@ def test_autopilot_resumes_a_training_cut_by_a_restart(tmp_path):
     ap = ds_autopilot.Autopilot(path)
     st = ap.status()
     assert st["running"] is False and st["interrupted"] == "training"
+    # the step is shown as cut, not "running" (2026-11-02), and that is saved
+    assert st["steps"]["training"] == "interrupted" and "Resume" in st["text"]
+    assert json.load(open(path))["steps"]["training"] == "interrupted"
+
+
+def _cut_queue_state(path, opts):
+    """What logs/autopilot.json holds when Dataset Studio dies during prj11's dataset."""
+    with open(path, "w") as fh:
+        json.dump({"running": True, "project": "p11", "step": "dataset", "opts": opts,
+                   "steps": {"dataset": "running", "export": "pending", "job": "pending",
+                             "training": "pending", "score": "pending"},
+                   "queue": [["p12", opts]], "history": [], "log": [], "job": None}, fh)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake interpreter is a symlink")
+def test_resume_goes_on_with_the_cut_project_then_the_queue(studio, tmp_path, monkeypatch):  # noqa: F811
+    _auto_setup(studio, tmp_path, monkeypatch)
+    _new_auto_project(studio, "p11", ["one", "two", "three", "four", "five"])
+    _new_auto_project(studio, "p12", ["one", "two", "three", "four", "five"])
+    # p11 had two cards rendered before the restart: they are kept, not rendered again
+    assert post(studio, "run", {"name": "p11", "only": [1, 2]})["ok"]
+    for _ in range(100):
+        if not post(studio, "status")["status"]["running"]:
+            break
+        time.sleep(0.05)
+    before = {c["index"]: c["file"] for c in ds_project.load("p11")["cards"] if c["file"]}
+    assert sorted(before) == [1, 2]
+    opts = {"engine": None, "preset": "klein4b", "steps": 1500, "score": True,
+            "score_engine": "fake", "keep_best": True}
+    path = str(tmp_path / "cut.json")
+    _cut_queue_state(path, opts)
+    monkeypatch.setattr(ds_autopilot, "AUTOPILOT", ds_autopilot.Autopilot(path, poll=0.05))
+    st = post(studio, "status")["autopilot"]
+    assert st["interrupted"] == "dataset" and st["steps"]["dataset"] == "interrupted"
+    r = post(studio, "autopilot_resume")
+    assert r["ok"], r
+    st = _wait_auto()
+    h = {x["project"]: x for x in st["history"]}
+    assert h["p11"]["ok"] is True and h["p12"]["ok"] is True, st.get("log")
+    assert all(v == "done" for v in h["p11"]["steps"].values())
+    after = {c["index"]: c["file"] for c in ds_project.load("p11")["cards"]}
+    assert after[1] == before[1] and after[2] == before[2]
+    assert not post(studio, "autopilot_resume")["ok"]          # nothing left to resume
+
+
+def test_drop_a_cut_chain(tmp_path, monkeypatch):
+    path = str(tmp_path / "cut.json")
+    _cut_queue_state(path, {"preset": "klein4b"})
+    ap = ds_autopilot.Autopilot(path)
+    assert ap.cancel(None, all_=True) is True
+    st = ap.status()
+    assert st["queue"] == [] and not st.get("interrupted") and st["steps"]["dataset"] == "cancelled"
+    with pytest.raises(ValueError):
+        ap.resume(None)
 
 
 # ------------------------------------------------------------------ gated check, LoRA metadata

@@ -82,7 +82,10 @@ checked before the next (a failed or unrendered card, fewer than 5 cards kept, a
 training that does not end "done", a LoRA the engine skips): the chain stops with its
 reason, shown in the violet panel and the log. Cancel stops the step in flight. If
 Dataset Studio is restarted during the training (which keeps going), the chain picks
-up there (`logs/autopilot.json`).
+up there (`logs/autopilot.json`). Cut at any other step, the violet panel says
+"interrupted" and offers Resume: the chain restarts at that step (the cards already
+rendered are kept, an existing job is trained again from its last save) and then the
+rest of the queue; Drop forgets it, nothing already rendered or trained is deleted.
 
 Safeguards for a run nobody watches:
 - a gated base (FLUX.2-klein-base-9B) is checked with `HfApi().auth_check` in
