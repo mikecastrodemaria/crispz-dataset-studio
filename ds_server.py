@@ -428,15 +428,37 @@ class Studio:
                     "checkpoint (on 4B the LoRA is skipped)")
         return ""
 
+    def _job_hint(self, root, job):
+        """What the LoRA needs on the engine side: the Klein variant, or the app."""
+        h = self._arch_hint(ds_aitoolkit.job_arch(root, job))
+        if h:
+            return h
+        pk = ds_aitoolkit.preset_of_job(root, job)
+        pr = ds_aitoolkit.PRESETS.get(pk) or {}
+        if not pr:
+            return ""
+        eng = ds_aitoolkit.engine_for_preset(pk, self.config.get("engines"))
+        return (f"trained on {pr['label']}: it runs in {pr.get('engine')}"
+                + ("" if eng else f" (not in Settings: add it to copy and score the LoRA there)")
+                + ("" if pr.get("tested") else "; this preset is not tested yet"))
+
+    def _default_engine(self, p, root, job, names):
+        """The engine to copy / score a job's LoRA in: the one running its model."""
+        e = ds_aitoolkit.engine_for_preset(ds_aitoolkit.preset_of_job(root, job),
+                                           self.config.get("engines"))
+        if e and e in names:
+            return e
+        return ("klein" if "klein" in names else
+                (p.get("engine") if p.get("engine") in names else (names[0] if names else "")))
+
     def op_lora_targets(self, data):
         p = self._project(data)
         root, job = self._job_of(p, data)
         engines = self._lora_engines()
         names = [e["name"] for e in engines]
-        default = ("klein" if "klein" in names else
-                   (p.get("engine") if p.get("engine") in names else (names[0] if names else "")))
+        default = self._default_engine(p, root, job, names)
         return {"job": job, "loras": ds_aitoolkit.job_loras(root, job), "engines": engines,
-                "default_engine": default, "hint": self._arch_hint(ds_aitoolkit.job_arch(root, job)),
+                "default_engine": default, "hint": self._job_hint(root, job),
                 "copied": (p.get("last_aitk") or {}).get("copied") or [],
                 "default_prompts": ds_lorascore.DEFAULT_PROMPTS,
                 "trigger": (p.get("settings") or {}).get("trigger_word") or "",
@@ -460,7 +482,7 @@ class Studio:
                              f"its LoRA folder is unknown")
         r = ds_aitoolkit.copy_lora(src["path"], target["loras_dir"],
                                    meta=ds_aitoolkit.lora_meta_for(p, job))
-        hint = self._arch_hint(ds_aitoolkit.job_arch(root, job))
+        hint = self._job_hint(root, job)
         la = p.setdefault("last_aitk", {"job": job})
         la.setdefault("copied", [])
         la["copied"] = [c for c in la["copied"] if c.get("path") != r["path"]] + \
@@ -481,7 +503,7 @@ class Studio:
         if self.runner.state["running"]:
             raise RuntimeError("a dataset run is in progress: wait for it")
         names = [e["name"] for e in self._lora_engines()]
-        eng = str(data.get("engine") or ("klein" if "klein" in names else p.get("engine") or "")).strip()
+        eng = str(data.get("engine") or self._default_engine(p, root, job, names)).strip()
         ec = (self.config.get("engines") or {}).get(eng) or {}
         prompts = data.get("prompts")
         if isinstance(prompts, str):
@@ -503,7 +525,7 @@ class Studio:
         if ds_lorascore.SCORER.state["running"]:
             raise RuntimeError("wait for the LoRA scoring to finish")
         names = [e["name"] for e in self._lora_engines()]
-        eng = str(data.get("engine") or ("klein" if "klein" in names else "")).strip()
+        eng = str(data.get("engine") or self._default_engine(p, root, job, names)).strip()
         target = next((e for e in self._lora_engines() if e["name"] == eng), None)
         if target is None:
             raise ValueError(f"engine '{eng}' has no install folder in Settings")
@@ -520,8 +542,16 @@ class Studio:
                 "preset": s.get("auto_preset") or "klein4b",
                 "steps": int(s.get("auto_steps") or 1500),
                 "score": bool(s.get("auto_score", True)),
-                "score_engine": s.get("auto_score_engine") or "",
+                "score_engine": self._score_engine_for(s.get("auto_score_engine"),
+                                                        s.get("auto_preset") or "klein4b"),
                 "keep_best": bool(s.get("auto_keep_best", True))}
+
+    def _score_engine_for(self, choice, preset):
+        """'auto' = the engine of Settings that runs the preset's model; '' = no score."""
+        choice = str(choice or "").strip()
+        if choice != "auto":
+            return choice
+        return ds_aitoolkit.engine_for_preset(preset, self.config.get("engines")) or ""
 
     def _autopilot_guard(self):
         if not ds_aitoolkit.find_root(self.config.get("ai_toolkit_dir")):

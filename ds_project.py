@@ -114,7 +114,9 @@ DEFAULT_SETTINGS = {
     # ai-toolkit job, the training and the LoRA score. Preset and steps of the job,
     # and the engine the LoRA is scored on ("" = no score).
     "autopilot": False, "auto_preset": "klein4b", "auto_steps": 1500,
-    "auto_score": True, "auto_score_engine": "klein",
+    # auto_score_engine "auto" = the crispz app of the trained model (crispz-klein for
+    # Klein, crispz-studio for Z-Image...: ds_aitoolkit.engine_for_preset)
+    "auto_score": True, "auto_score_engine": "auto",
     # after the score, only the best save stays in the engine, as <job base>_best
     "auto_keep_best": True,
 }
@@ -381,8 +383,9 @@ def update_settings(p, new):
         s["auto_steps"] = max(50, min(100000, int(s.get("auto_steps") or 1500)))
     except (TypeError, ValueError):
         s["auto_steps"] = 1500
-    if s.get("auto_preset") not in ("klein4b", "klein9b"):
-        s["auto_preset"] = "klein4b"
+    import ds_aitoolkit
+    if s.get("auto_preset") not in ds_aitoolkit.PRESETS:
+        s["auto_preset"] = ds_aitoolkit.DEFAULT_PRESET
     _rebuild_cards(p)
     save(p)
     return p

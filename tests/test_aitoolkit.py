@@ -81,7 +81,7 @@ def test_create_job_trigger_and_errors(tmp_path):
     assert 'trigger_word: "tok"' in text and '"flux2_klein_4b"' in text
     assert "quantize: false" in text and "qtype" not in text
     with pytest.raises(ValueError):
-        ds_aitoolkit.create_job(p, str(lot), cfg, preset="sdxl")
+        ds_aitoolkit.create_job(p, str(lot), cfg, preset="nope")
     with pytest.raises(FileNotFoundError):
         ds_aitoolkit.create_job(p, str(lot), {"ai_toolkit_dir": ""})
     empty = tmp_path / "empty"

@@ -346,8 +346,11 @@ class Autopilot:
         eng = (o.get("score_engine") or "").strip()
         if not o.get("score", True) or not eng:
             self.state["steps"]["score"] = "skipped"
+            pr = ds_aitoolkit.PRESETS.get(o.get("preset")) or {}
             self._say("score: skipped (" + ("turned off" if not o.get("score", True)
-                                            else "no scoring engine set") + ")")
+                                            else f"no engine for {pr.get('label', 'this model')} in "
+                                                 f"Settings: add {pr.get('engine', 'its crispz app')} "
+                                                 f"to score the LoRA") + ")")
             return
         job = self.state.get("job")
         t = studio.op("lora_targets", {"name": name, "job": job})
