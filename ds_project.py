@@ -119,6 +119,11 @@ DEFAULT_SETTINGS = {
     "auto_score": True, "auto_score_engine": "auto",
     # after the score, only the best save stays in the engine, as <job base>_best
     "auto_keep_best": True,
+    # Captions in tags (caption_source "tags", ds_captions.TAGS): an optional prefix
+    # after the trigger word, e.g. Pony's quality tags. sdxl_checkpoint: the SDXL
+    # checkpoint (Illustrious, Pony... a .safetensors path or a HF repo) the "sdxl"
+    # ai-toolkit preset trains on; empty = SDXL base (2026-11-02).
+    "tag_prefix": "", "sdxl_checkpoint": "",
 }
 
 # A line the face model cannot judge (rear view, closed eyes, face hidden): the card
@@ -371,7 +376,9 @@ def update_settings(p, new):
     s["copy_check"] = bool(s.get("copy_check", True))
     s["artifact_check"] = bool(s.get("artifact_check"))
     s["subject"] = " ".join(str(s.get("subject") or "").split())
-    if s.get("caption_source") not in ("prompt", "ollama", "both"):
+    s["tag_prefix"] = " ".join(str(s.get("tag_prefix") or "").split())
+    s["sdxl_checkpoint"] = str(s.get("sdxl_checkpoint") or "").strip().strip('"')
+    if s.get("caption_source") not in ("prompt", "ollama", "both", "tags"):
         s["caption_source"] = "prompt"
     if s.get("export_format") not in ("png", "jpg"):
         s["export_format"] = "png"
@@ -693,6 +700,36 @@ RUNNER = Runner()
 # ----------------------------------------------------------------------------
 # Card edits and export
 # ----------------------------------------------------------------------------
+def recaption(name, ollama_cfg, progress=None):
+    """Writes every kept card's caption again with the project's current caption
+    settings (source, trigger word, tag prefix): a dataset rendered with prompt
+    captions gets tag captions for an SDXL anime checkpoint without a new render.
+    Captions edited by hand are replaced. Returns {count, fallbacks, warnings}."""
+    p = load(name)
+    d = project_dir(name)
+    s = p["settings"]
+    cards = [c for c in p["cards"] if c.get("status") == "done" and c.get("file")]
+    fallbacks, warnings = 0, []
+    for n, c in enumerate(cards, start=1):
+        if progress:
+            progress(n, len(cards), c["index"])
+        path = os.path.join(d, c["file"])
+        text, _, _ = split_line(c["prompt"])
+        text = resolved_text(path, text, s)
+        cap = ds_captions.caption_for(path, text, s, ollama_cfg)
+        c["caption"] = cap["caption"]
+        c["caption_source_used"] = cap["source_used"]
+        if cap.get("warning"):
+            fallbacks += 1
+            if cap["warning"] not in warnings:
+                warnings.append(cap["warning"])
+        save(p)                      # card by card: a crash keeps what is done
+    _log(f"recaption '{name}': {len(cards)} card(s), source {s.get('caption_source')}"
+         + (f", {fallbacks} fell back to the prompt line ({'; '.join(warnings)})"
+            if fallbacks else ""))
+    return {"count": len(cards), "fallbacks": fallbacks, "warnings": warnings}
+
+
 def update_card(p, index, caption=None, status=None, use_try=None):
     card = next((c for c in p["cards"] if c["index"] == int(index)), None)
     if card is None:

@@ -304,7 +304,8 @@ class Autopilot:
     def _do_job(self, studio, name, o):
         self._step("job")
         r = studio.op("aitk_create", {"name": name, "lot": self.state.get("lot"),
-                                      "preset": o.get("preset"), "steps": o.get("steps")})
+                                      "preset": o.get("preset"), "steps": o.get("steps"),
+                                      "checkpoint": o.get("checkpoint") or ""})
         if not r.get("ok"):
             raise RuntimeError(r.get("error"))
         self.state["job"] = r["job"]

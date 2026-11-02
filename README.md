@@ -36,6 +36,19 @@
    `docs/lora-klein-2026-10-31.md` (rank 16, 1500 steps by default). Nothing starts on
    its own: the dialog gives the command line, or the dataset is in ai-toolkit's UI.
    A new job never overwrites an earlier one (`_v2`, `_v3`).
+   Models beyond Klein (2026-11-02): FLUX.3 Image Klein, Z-Image Turbo, Qwen-Image,
+   FLUX.1 Krea dev, Krea 2 Turbo, Ideogram 4 and an SDXL checkpoint, with ai-toolkit's
+   own defaults for each (marked "not tested" until a training on the 5090 confirms
+   them). Z-Image Turbo and Krea 2 Turbo train with ai-toolkit's training adapter,
+   as crispz-studio and crispz-krea2 run the Turbo models. The LoRA is copied and
+   scored in the crispz app that runs its model (Score on "auto": crispz-studio for
+   Z-Image, crispz-flux3 for FLUX.3...); none configured, the score is skipped and
+   says which app to add. Illustrious, Pony and other SDXL anime checkpoints: pick
+   "SDXL checkpoint", give its .safetensors (a LoRA trained on SDXL base holds badly
+   on them), caption with "Ollama tags" (Danbooru-style tags, optional prefix such as
+   Pony's quality tags) and "Re-caption the dataset" to rewrite the captions of a
+   dataset already rendered, without a new render.
+
 8. "Launch training" (in the job dialog, or the green bar once a job exists) runs
    `run.py config/<job>.yaml` with ai-toolkit's own `.venv` interpreter,
    `PYTHONUTF8=1` and `HF_TOKEN` (from the environment or the Hugging Face token

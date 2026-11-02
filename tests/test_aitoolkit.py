@@ -749,3 +749,134 @@ def test_keep_best_keeps_the_best_save_and_only_removes_our_copies(tmp_path, mon
     assert r["replaced"] and "weak LoRA" in r["warning"]
     with pytest.raises(ValueError):
         ds_lorascore.keep_best("p", str(root), "other_v1", str(loras))
+
+
+# ------------------------------------------------------------------ presets beyond Klein, tags
+import ds_captions            # noqa: E402
+
+
+def test_presets_follow_ai_toolkit_defaults(tmp_path):
+    zt = ds_aitoolkit.build_config("j", "/d", "zimage_turbo", 1500, None, ["tok, a"], [1024])
+    assert 'arch: "zimage"' in zt and 'name_or_path: "Tongyi-MAI/Z-Image-Turbo"' in zt
+    assert "zimage_turbo_training_adapter_v2.safetensors" in zt
+    assert 'timestep_type: "weighted"' in zt and "unload_text_encoder: false" in zt
+    assert "guidance_scale: 1" in zt and "sample_steps: 9" in zt
+    f3 = ds_aitoolkit.build_config("j", "/d", "flux3", 1500, None, ["tok, a"], [1024])
+    assert 'qtype: "convrot8"' in f3 and 'qtype_te: "convrot8"' in f3
+    assert "model_kwargs:\n          match_target_res: true" in f3
+    assert 'timestep_type: "shift"' in f3 and "sample_steps: 28" in f3
+    sd = ds_aitoolkit.build_config("j", "/d", "sdxl", 1500, None, ["tok, a"], [1024],
+                                   name_or_path="D:\\models\\illu.safetensors")
+    assert 'name_or_path: "D:/models/illu.safetensors"' in sd
+    assert 'noise_scheduler: "ddpm"' in sd and "timestep_type" not in sd
+    assert 'sampler: "ddpm"' in sd and "guidance_scale: 6" in sd
+    for k in ds_aitoolkit.PRESETS:                       # every preset writes a config
+        assert "arch:" in ds_aitoolkit.build_config("j", "/d", k, 100, None, ["a"], [512])
+    assert ds_aitoolkit.gated_repo_of("flux3") == "black-forest-labs/flux-3-image-klein-base"
+    assert ds_aitoolkit.gated_repo_of("zimage_turbo") is None
+
+
+def test_sdxl_checkpoint_job_and_engine_lookup(tmp_path):
+    root = fake_aitk(tmp_path)
+    lot = make_lot(tmp_path / "lot", trigger="tok")
+    cfg = {"ai_toolkit_dir": str(root)}
+    p = {"name": "anime", "settings": {"trigger_word": "tok", "caption_source": "prompt"}}
+    ck = tmp_path / "illustrious.safetensors"
+    ck.write_bytes(b"x")
+    r = ds_aitoolkit.create_job(p, str(lot), cfg, preset="sdxl", checkpoint=str(ck))
+    assert r["model"] == str(ck) and any("tags" in w for w in r["warnings"])
+    assert ds_aitoolkit.preset_of_job(str(root), r["job"]) == "sdxl"
+    r = ds_aitoolkit.create_job(p, str(lot), cfg, preset="sdxl", checkpoint="")
+    assert r["model"] == "stabilityai/stable-diffusion-xl-base-1.0"
+    assert any("SDXL base" in w for w in r["warnings"])
+    assert ds_aitoolkit.checkpoint_for("sdxl", "someone/pony-xl") == "someone/pony-xl"
+    with pytest.raises(FileNotFoundError):
+        ds_aitoolkit.checkpoint_for("sdxl", str(tmp_path / "missing.safetensors"))
+    # klein ignores a checkpoint; an untested preset says so
+    assert ds_aitoolkit.checkpoint_for("klein4b", str(ck)).endswith("klein-base-4B")
+    r = ds_aitoolkit.create_job(p, str(lot), cfg, preset="qwen_image")
+    assert any("not tested" in w for w in r["warnings"])
+    assert ds_aitoolkit.preset_of_job(str(root), r["job"]) == "qwen_image"
+    eng = {"zi": {"dir": "D:/Github/crispz-studio"}, "qwen": {"dir": ""},
+           "klein": {"dir": "D:/Github/crispz-klein"}}
+    assert ds_aitoolkit.engine_for_preset("zimage_turbo", eng) == "zi"      # by folder
+    assert ds_aitoolkit.engine_for_preset("qwen_image", eng) == "qwen"      # by name
+    assert ds_aitoolkit.engine_for_preset("klein9b", eng) == "klein"
+    assert ds_aitoolkit.engine_for_preset("krea2_turbo", eng) is None
+
+
+class _FakeOllama:
+    def __init__(self, answer):
+        import http.server
+        import threading as th
+        ans = answer
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _json(self, obj):
+                b = json.dumps(obj).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+
+            def do_GET(self):
+                self._json({"models": [{"name": "qwen3-vl:8b"}]})
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
+                if self.path == "/api/show":
+                    return self._json({"capabilities": ["completion", "vision"]})
+                _FakeOllama.last_prompt = body.get("prompt")
+                self._json({"response": ans})
+
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
+        th.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+
+def test_tag_captions(tmp_path):
+    img = tmp_path / "c.png"
+    Image.new("RGB", (8, 8), (200, 50, 50)).save(img)
+    o = _FakeOllama("Here are the tags:\n1girl, solo, Red_Hair, green eyes, red hair, smiling.")
+    cfg = {"caption_source": "tags", "trigger_word": "tok", "tag_prefix": "score_9, score_8_up"}
+    r = ds_captions.caption_for(str(img), "a woman smiling", cfg, {"url": o.url})
+    assert r["caption"] == "tok, score_9, score_8_up, 1girl, solo, red hair, green eyes, smiling"
+    assert r["source_used"] == "tags" and "Danbooru" in _FakeOllama.last_prompt
+    o.srv.shutdown()
+    # Ollama gone: the prompt line, said
+    r = ds_captions.caption_for(str(img), "a woman smiling", cfg, {"url": o.url})
+    assert r["caption"] == "tok, a woman smiling" and "fell back" in r["warning"]
+
+
+def test_recaption_over_http(studio, tmp_path):  # noqa: F811
+    post(studio, "project_new", {"name": "rc"})
+    post(studio, "project_settings", {"name": "rc", "settings": {
+        "prompts": ["one", "two"], "width": 32, "height": 32, "trigger_word": "tok",
+        "max_rerolls": 0}})
+    post(studio, "set_reference", {"name": "rc", "data": data_url()})
+    post(studio, "run", {"name": "rc"})
+    for _ in range(100):
+        if not post(studio, "status")["status"]["running"]:
+            break
+        time.sleep(0.05)
+    assert ds_project.load("rc")["cards"][0]["caption"] == "tok, one"
+    post(studio, "project_settings", {"name": "rc", "settings": {"trigger_word": "ohwx girl"}})
+    r = post(studio, "recaption", {"name": "rc"})
+    assert r["ok"], r
+    for _ in range(100):
+        rc = post(studio, "status")["recaption"]
+        if not rc["running"]:
+            break
+        time.sleep(0.05)
+    assert rc["ok"] and rc["count"] == 2 and rc["fallbacks"] == 0
+    assert [c["caption"] for c in ds_project.load("rc")["cards"]] == ["ohwx girl, one",
+                                                                       "ohwx girl, two"]
+    st = post(studio, "aitk_status")["aitk"]
+    assert {p["name"] for p in st["presets"]} >= {"klein4b", "flux3", "zimage_turbo", "sdxl",
+                                                  "krea", "krea2_turbo", "qwen_image", "ideogram4"}
+    assert [p["tested"] for p in st["presets"] if p["name"] == "klein4b"] == [True]

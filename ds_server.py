@@ -52,6 +52,8 @@ Ops:
                                         (the project's auto_* settings)
   autopilot_queue {names: [...]}        the autopilot on several projects, one after
                                         the other (each with its own auto_* settings)
+  recaption {name}                      captions of the kept cards written again with the
+                                        current settings (e.g. Ollama tags), in a thread
   autopilot_resume {}                   restart a chain cut by a restart, at its step,
                                         with the rest of its queue
   autopilot_cancel {all?}               all: also empty the queue (or drop a cut chain)
@@ -130,6 +132,7 @@ class Studio:
         self.config = config or load_config()
         self.engines = ds_engines.Engines(self.config)
         self.runner = ds_project.RUNNER
+        self.recap = {"running": False}
         self._resume_autopilot()
 
     def _resume_autopilot(self):
@@ -303,7 +306,40 @@ class Studio:
     def op_status(self, data):
         return {"status": self.runner.status(), "training": ds_aitoolkit.trainer().status(),
                 "lora_score": ds_lorascore.SCORER.status(),
-                "autopilot": ds_autopilot.autopilot().status()}
+                "autopilot": ds_autopilot.autopilot().status(),
+                "recaption": dict(self.recap)}
+
+    def op_recaption(self, data):
+        """Every kept card captioned again with the current caption settings, in a
+        thread (Ollama takes a few seconds per image). Not during a run (the cards
+        change) nor a training (a vision model on the GPU next to it)."""
+        p = self._project(data)
+        if self.recap.get("running"):
+            raise RuntimeError("a re-caption is already running")
+        if self.runner.state["running"]:
+            raise RuntimeError("wait for the run to finish before re-captioning")
+        src = (p.get("settings") or {}).get("caption_source") or "prompt"
+        if src != "prompt":
+            self._training_guard("re-captioning with Ollama")
+        name = p["name"]
+        self.recap = {"running": True, "project": name, "done": 0, "total": 0, "ok": None,
+                      "error": "", "source": src}
+
+        def prog(n, total, idx):
+            self.recap.update(done=n - 1, total=total, card=idx)
+
+        def work():
+            try:
+                r = ds_project.recaption(name, self.config.get("ollama") or {}, prog)
+                self.recap.update(ok=True, done=r["count"], total=r["count"], **r)
+            except Exception as e:
+                self.recap.update(ok=False, error=f"{type(e).__name__}: {e}")
+                log(f"recaption '{name}': {self.recap['error']}")
+            finally:
+                self.recap["running"] = False
+
+        threading.Thread(target=work, daemon=True, name="ds-recaption").start()
+        return {"recaption": dict(self.recap)}
 
     def op_card_update(self, data):
         p = self._project(data)
@@ -349,8 +385,11 @@ class Studio:
             exported = self.op_export({"name": p["name"]})
             lot_path = exported["dir"]
             p = ds_project.load(p["name"])
+        ckpt = data.get("checkpoint")
+        if ckpt is None:
+            ckpt = (p.get("settings") or {}).get("sdxl_checkpoint")
         r = ds_aitoolkit.create_job(p, lot_path, self.config, preset=data.get("preset"),
-                                    steps=data.get("steps"))
+                                    steps=data.get("steps"), checkpoint=ckpt)
         p["last_aitk"] = {k: r[k] for k in ("job", "dataset_dir", "config_path", "command")}
         ds_project.save(p)
         if exported:
@@ -544,7 +583,8 @@ class Studio:
                 "score": bool(s.get("auto_score", True)),
                 "score_engine": self._score_engine_for(s.get("auto_score_engine"),
                                                         s.get("auto_preset") or "klein4b"),
-                "keep_best": bool(s.get("auto_keep_best", True))}
+                "keep_best": bool(s.get("auto_keep_best", True)),
+                "checkpoint": s.get("sdxl_checkpoint") or ""}
 
     def _score_engine_for(self, choice, preset):
         """'auto' = the engine of Settings that runs the preset's model; '' = no score."""

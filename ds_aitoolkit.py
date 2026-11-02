@@ -106,13 +106,19 @@ PRESETS = {
                     "sample": dict(_SAMPLE, guidance=1, steps=9),
                     "gated": True, "engine": "crispz-krea2",
                     "note": "for crispz-krea2's Krea 2 Turbo"},
-    "sdxl": {"label": "SDXL", "arch": "sdxl",
-             "name_or_path": "stabilityai/stable-diffusion-xl-base-1.0",
+    # SDXL family: trained on the checkpoint the LoRA will be used with (Illustrious,
+    # Pony... drifted too far from SDXL base for a base LoRA to hold), given as a
+    # .safetensors path or a HF repo (sdxl_checkpoint); empty = SDXL base. Those
+    # anime checkpoints learnt on tags: caption the dataset with "Ollama tags".
+    "sdxl": {"label": "SDXL checkpoint (Illustrious, Pony...)", "arch": "sdxl",
+             "name_or_path": "stabilityai/stable-diffusion-xl-base-1.0", "checkpoint": True,
              "model": {"quantize": False, "quantize_te": False},
              "train": {"noise_scheduler": "ddpm", "timestep_type": None},
              "sample": dict(_SAMPLE, sampler="ddpm", guidance=6),
              "engine": "crispz-sdxl",
-             "note": "the lightest; no crispz SDXL engine yet, so no score"},
+             "note": "give the checkpoint (an Illustrious or Pony .safetensors, empty = SDXL "
+                     "base) and caption with Ollama tags; no crispz SDXL engine yet, so no "
+                     "score, and ArcFace is unreliable on anime faces anyway"},
     "ideogram4": {"label": "Ideogram 4 (experimental, gated)", "arch": "ideogram4",
                   "name_or_path": "ideogram-ai/ideogram-4-fp8",
                   "model": {"quantize": True, "quantize_te": True, "low_vram": True,
@@ -222,7 +228,12 @@ def preset_of_job(root, job):
     except OSError:
         return None
     repo = m.group(1).strip() if m else ""
-    return next((k for k, v in PRESETS.items() if v["name_or_path"] == repo), None)
+    hit = next((k for k, v in PRESETS.items() if v["name_or_path"] == repo), None)
+    if hit:
+        return hit
+    # a preset on the user's own checkpoint (SDXL): found by its architecture
+    arch = job_arch(root, job)
+    return next((k for k, v in PRESETS.items() if v.get("checkpoint") and v["arch"] == arch), None)
 
 
 def datasets_dir(root, cfg=None):
@@ -273,7 +284,8 @@ def _yaml_kv(key, value, indent):
     return [f"{pad}{key}: {_q(value)}"]
 
 
-def build_config(job, dataset_path, preset, steps, trigger, sample_prompts, resolutions):
+def build_config(job, dataset_path, preset, steps, trigger, sample_prompts, resolutions,
+                 name_or_path=None):
     pr = PRESETS[preset]
     tr = dict({"noise_scheduler": "flowmatch", "timestep_type": "sigmoid"}, **pr.get("train", {}))
     sm = dict(_SAMPLE, **pr.get("sample", {}))
@@ -323,7 +335,7 @@ def build_config(job, dataset_path, preset, steps, trigger, sample_prompts, reso
         "        lr: 1e-4",
         "        dtype: \"bf16\"",
         "      model:",
-        f"        name_or_path: {_q(pr['name_or_path'])}",
+        f"        name_or_path: {_q(_path(name_or_path or pr['name_or_path']))}",
         f"        arch: {_q(pr['arch'])}",
     ]
     for k, v in pr.get("model", {}).items():
@@ -363,7 +375,21 @@ def _sample_prompts(captions, trigger, n=4):
     return caps
 
 
-def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
+def checkpoint_for(preset, checkpoint):
+    """The model a preset trains on: the user's checkpoint for the presets that take
+    one (a local .safetensors must exist, a HF repo id is passed as is)."""
+    pr = PRESETS[preset]
+    c = str(checkpoint or "").strip().strip('"')
+    if not pr.get("checkpoint") or not c:
+        return pr["name_or_path"]
+    local = c.lower().endswith((".safetensors", ".ckpt")) or "\\" in c or c[1:3] == ":/" \
+        or c.startswith(("/", "."))
+    if local and not os.path.isfile(os.path.expanduser(c)):
+        raise FileNotFoundError(f"checkpoint not found: {c}")
+    return c
+
+
+def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None, checkpoint=None):
     """Copies the lot into ai-toolkit's datasets folder and writes the job config.
     Returns {job, root, dataset_dir, config_path, command, pairs, preset, warnings}."""
     root = find_root((cfg or {}).get("ai_toolkit_dir"))
@@ -376,6 +402,7 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
     steps = int(steps or DEFAULT_STEPS)
     if not 50 <= steps <= 100000:
         raise ValueError("steps must be between 50 and 100000")
+    model_path = checkpoint_for(preset, checkpoint)
     if not lot_dir or not os.path.isdir(lot_dir):
         raise FileNotFoundError(f"export folder not found: {lot_dir}")
     images = sorted(f for f in os.listdir(lot_dir) if f.lower().endswith(IMAGE_EXTS))
@@ -414,7 +441,8 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
         trigger = trig
     size = int(s.get("export_size") or 1024)
     res = [r for r in (512, 768, 1024) if r <= size] or [512]
-    text = build_config(job, dst, preset, steps, trigger, _sample_prompts(captions, trig), res)
+    text = build_config(job, dst, preset, steps, trigger, _sample_prompts(captions, trig), res,
+                        name_or_path=model_path)
     cfg_path = os.path.join(root, "config", job + ".yaml")
     with open(cfg_path, "w", encoding="utf-8") as fh:
         fh.write(text)
@@ -426,6 +454,16 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
         command = f'cd /d "{root}" && set PYTHONUTF8=1 && "{py}" run.py config/{job}.yaml'
     else:
         command = f'cd "{root}" && PYTHONUTF8=1 "{py}" run.py config/{job}.yaml'
+    if PRESETS[preset].get("checkpoint"):
+        if model_path == PRESETS[preset]["name_or_path"]:
+            warnings.append("no checkpoint given: trained on SDXL base; for Illustrious or "
+                            "Pony give their .safetensors (a base LoRA holds badly on them)")
+        if (s.get("caption_source") or "prompt") != "tags":
+            warnings.append("the captions are sentences: Illustrious and Pony learnt on tags, "
+                            "caption with 'Ollama tags' and Re-caption before the job")
+    if not PRESETS[preset].get("tested"):
+        warnings.append(f"{PRESETS[preset]['label']}: preset not tested yet on the 5090 "
+                        f"(ai-toolkit's own defaults)")
     if PRESETS[preset]["name_or_path"].endswith("9B"):
         warnings.append("FLUX.2-klein-base-9B is gated: accept its licence on Hugging Face "
                         "with the account whose token is on this PC before training")
@@ -434,6 +472,7 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None):
     for w in warnings:
         _log(f"job '{job}': {w}")
     return {"job": job, "root": root, "dataset_dir": dst, "config_path": cfg_path,
+            "model": model_path,
             "command": command, "pairs": len(images), "preset": preset, "steps": steps,
             "warnings": warnings}
 
