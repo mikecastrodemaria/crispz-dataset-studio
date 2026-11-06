@@ -38,6 +38,7 @@ import threading
 import ds_project
 import ds_aitoolkit
 import ds_lorascore
+import ds_similar
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(APP_DIR, "logs", "autopilot.json")
@@ -292,6 +293,13 @@ class Autopilot:
         self._done("dataset", f"{len(done)} card(s) kept"
                    + (f", {len(low)} below the likeness threshold (kept, review them later)"
                       if low else ""))
+        try:
+            w = ds_similar.summary(ds_similar.project_pairs(p, ds_project.project_dir(name)))
+        except Exception:
+            w = ""
+        if w:
+            # not a stop: the run goes on unattended; said so the user reviews later
+            self._say(f"dataset: {w}")
 
     def _do_export(self, studio, name, o):
         self._step("export")

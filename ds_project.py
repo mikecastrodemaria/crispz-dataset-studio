@@ -124,6 +124,9 @@ DEFAULT_SETTINGS = {
     # checkpoint (Illustrious, Pony... a .safetensors path or a HF repo) the "sdxl"
     # ai-toolkit preset trains on; empty = SDXL base (2026-11-02).
     "tag_prefix": "", "sdxl_checkpoint": "",
+    # Cards too close to each other (ds_similar): the largest dHash distance (of 64
+    # bits) still reported as "too close"; 0 = near-identical only (2026-11-06).
+    "similar_max": 6,
 }
 
 # A line the face model cannot judge (rear view, closed eyes, face hidden): the card
@@ -377,6 +380,11 @@ def update_settings(p, new):
     s["artifact_check"] = bool(s.get("artifact_check"))
     s["subject"] = " ".join(str(s.get("subject") or "").split())
     s["tag_prefix"] = " ".join(str(s.get("tag_prefix") or "").split())
+    try:
+        s["similar_max"] = max(0, min(32, int(s.get("similar_max") if s.get("similar_max")
+                                              not in (None, "") else 6)))
+    except (TypeError, ValueError):
+        s["similar_max"] = 6
     s["sdxl_checkpoint"] = str(s.get("sdxl_checkpoint") or "").strip().strip('"')
     if s.get("caption_source") not in ("prompt", "ollama", "both", "tags"):
         s["caption_source"] = "prompt"
