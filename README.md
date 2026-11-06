@@ -83,6 +83,39 @@
     `projects/<name>/lora_tests/<lora>/`, the means in `project.json`. One GPU job at
     a time: no scoring during a run or a training, and the reverse.
 
+### Review: cards too close, Info, Compare
+
+Ideas taken from DTInspector (qxm.de DT Helper), cut down to a dataset:
+- **Check similar** (green bar): kept cards too close to each other, by a perceptual
+  hash (dHash, 64 bits) and an exact copy check (SHA-256). A LoRA learns a repeated
+  composition instead of the identity: the pairs are marked on the cards, with a link
+  that compares them; the export, the AI-Toolkit job and the autopilot say so too.
+  Nothing is removed. `similar_max` (default 6 of 64 bits) sets how close is too close.
+- **Info** (viewer): what the engine rendered (the line with its {a|b} groups expanded,
+  seed, model, size, steps) from the PNG's `crispz` chunk, with the card's likeness,
+  flags and caption.
+- **Compare** (viewer, or the link of a pair): any two renders of the project, tries
+  included, with a slider, side by side or an A/B toggle (space); the settings that
+  differ are highlighted, and the words of the rendered line and caption that changed.
+
+### From IrfanView (or any viewer)
+
+`send_to_studio.bat <image>` creates a project with that photo as its reference and opens
+it in the browser (Dataset Studio is started if it is not running; an existing project
+name gets `-2`). IrfanView has no public plugin SDK, but its external editor (Shift+E)
+runs a program on the current file: in IrfanView's INI file (Options > Properties >
+Misc. shows where it is), add a `[CustomEditors]` section with one line per extension:
+
+```
+[CustomEditors]
+JPG=D:\Github\crispz-dataset-studio\send_to_studio.bat "%1"
+PNG=D:\Github\crispz-dataset-studio\send_to_studio.bat "%1"
+```
+
+Then Shift+E on a photo starts a dataset project from it. Explorer's "Send to" works the
+same way with a shortcut to the .bat. Everything goes through Dataset Studio's local API
+(127.0.0.1): nothing leaves the PC.
+
 ### Autopilot and queue
 
 Tick "Run goes all the way to the LoRA" (Autopilot box) and Run becomes "Run + LoRA":

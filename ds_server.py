@@ -52,6 +52,8 @@ Ops:
                                         (the project's auto_* settings)
   autopilot_queue {names: [...]}        the autopilot on several projects, one after
                                         the other (each with its own auto_* settings)
+  image_meta {name, file}               size, crispz PNG chunk, card / try data
+  similar {name, max_distance?}         pairs of kept cards too close to each other
   recaption {name}                      captions of the kept cards written again with the
                                         current settings (e.g. Ollama tags), in a thread
   autopilot_resume {}                   restart a chain cut by a restart, at its step,
@@ -77,6 +79,7 @@ import ds_engines
 import ds_project
 import ds_aitoolkit
 import ds_lorascore
+import ds_similar
 import ds_autopilot
 import ds_captions
 
@@ -355,7 +358,64 @@ class Studio:
                               output_dir=self.config.get("output_dir"),
                               date_subfolders=bool(self.config.get("date_subfolders", True)))
         r["out_url"] = "/out/" + urllib.request.quote(r["zip_rel"])
+        r["warnings"] = self._similar_warnings(p)
         return r
+
+    def _similar_warnings(self, p):
+        try:
+            pairs = ds_similar.project_pairs(p, ds_project.project_dir(p["name"]))
+        except Exception as e:
+            log(f"similar cards: check failed ({type(e).__name__}: {e})")
+            return []
+        w = ds_similar.summary(pairs)
+        if w:
+            log(f"'{p['name']}': {w}")
+        return [w] if w else []
+
+    def op_image_meta(self, data):
+        """What is known of one project image: its size, the "crispz" chunk the engine
+        wrote in the PNG (the line it really rendered, seed, model...), and the card /
+        try it belongs to (score, flags). For the viewer's Info and Compare."""
+        p = self._project(data)
+        rel = str(data.get("file") or "")
+        root = ds_project.project_dir(p["name"])
+        path = _safe_join(root, rel)
+        if not path or not os.path.isfile(path):
+            raise FileNotFoundError(f"no such image in the project: {rel}")
+        from PIL import Image
+        with Image.open(path) as im:
+            w, h = im.size
+            raw = im.info.get("crispz") or ""
+        try:
+            chunk = json.loads(raw) if raw else {}
+        except ValueError:
+            chunk = {"raw": raw[:400]}
+        card = None
+        for c in p.get("cards") or []:
+            for i, tr in enumerate(c.get("tries") or []):
+                if tr.get("file") == rel:
+                    card = {"index": c["index"], "try": i + 1, "tries": len(c["tries"]),
+                            "kept": c.get("file") == rel, "status": c.get("status"),
+                            "line": c.get("prompt"), "caption": c.get("caption"),
+                            "seed": tr.get("seed"), "score": tr.get("score"),
+                            "model": tr.get("model") or "", "prompt": tr.get("prompt"),
+                            "flags": tr.get("flags") or [], "time_s": tr.get("time_s")}
+            if card is None and c.get("file") == rel:
+                card = {"index": c["index"], "kept": True, "status": c.get("status"),
+                        "line": c.get("prompt"), "caption": c.get("caption"),
+                        "seed": c.get("seed"), "score": c.get("score")}
+        return {"file": rel, "width": w, "height": h, "bytes": os.path.getsize(path),
+                "crispz": chunk, "card": card,
+                "engine": p.get("engine"), "settings_model": (p.get("settings") or {}).get("model")}
+
+    def op_similar(self, data):
+        p = self._project(data)
+        md = data.get("max_distance")
+        pairs = ds_similar.project_pairs(p, ds_project.project_dir(p["name"]),
+                                                        None if md in (None, "") else int(md))
+        return {"pairs": pairs, "summary": ds_similar.summary(pairs),
+                "max_distance": (p.get("settings") or {}).get("similar_max", 6) if md in (None, "")
+                else int(md)}
 
     def op_project_clone(self, data):
         p = self._project(data)
@@ -390,6 +450,7 @@ class Studio:
             ckpt = (p.get("settings") or {}).get("sdxl_checkpoint")
         r = ds_aitoolkit.create_job(p, lot_path, self.config, preset=data.get("preset"),
                                     steps=data.get("steps"), checkpoint=ckpt)
+        r["warnings"] = self._similar_warnings(p) + list(r.get("warnings") or [])
         p["last_aitk"] = {k: r[k] for k in ("job", "dataset_dir", "config_path", "command")}
         ds_project.save(p)
         if exported:

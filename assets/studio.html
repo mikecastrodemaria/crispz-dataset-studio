@@ -44,7 +44,16 @@ textarea{width:100%;min-height:120px;resize:vertical;font-family:ui-monospace,Co
 #bar i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);margin-right:5px}.dot.on{background:var(--ok)}
 dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;max-width:760px;width:92vw;padding:14px;overflow:hidden}
-#zoom{width:fit-content;max-width:96vw;max-height:96vh;padding:8px}
+#zoom{width:fit-content;max-width:96vw;max-height:96vh;padding:8px;overflow:auto}
+.meta{font-size:12px;border-collapse:collapse;margin-top:6px;max-width:900px}.meta td{padding:2px 8px;border-bottom:1px solid var(--line);vertical-align:top}.meta td:first-child{color:var(--mut);white-space:nowrap}
+.meta tr.diff td{background:#e0a12f1f}.meta mark{background:#4f8cff55;color:var(--fg);border-radius:3px;padding:0 2px}
+#cmpDlg{max-width:96vw;width:1100px;max-height:96vh;overflow:auto}
+.cmpview{position:relative;display:inline-block;max-width:100%;background:#000;border-radius:6px;overflow:hidden;user-select:none}
+.cmpview img{display:block;max-width:min(1060px,92vw);max-height:62vh;min-width:min(420px,88vw);object-fit:contain;image-rendering:auto}
+.cmpview .ovl{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain}
+.cmpview .bar{position:absolute;top:0;bottom:0;width:2px;background:var(--acc);left:50%}
+.cmpview .lab{position:absolute;top:6px;padding:2px 7px;border-radius:8px;background:#000a;font-size:11px}
+.simw{color:var(--warn);font-size:11px}.simw a{color:var(--acc);cursor:pointer}
 dialog::backdrop{background:#000a}dialog h3{margin:0 0 10px}
 .eng{border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:8px}
 .eng .row input[type=text]{flex:1}
@@ -130,7 +139,7 @@ small{color:var(--mut)}
 </aside>
 <section class="grid">
   <div class="box" id="doneBar"><b id="doneTxt">Dataset complete</b><span style="flex:1"></span>
-    <button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><button id="doneLora">Copy LoRA</button><button id="doneScore">Score LoRA</button><small id="doneHint"></small></div>
+    <button id="doneSimilar" title="Find kept cards too close to each other (same composition): a LoRA learns the repetition">Check similar</button><button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><button id="doneLora">Copy LoRA</button><button id="doneScore">Score LoRA</button><small id="doneHint"></small></div>
   <div class="box" id="autoBar"><div class="row" style="margin:0"><b id="autoTxt"></b><span style="flex:1"></span><button id="autoLog">Log</button><button id="autoResume" class="primary" title="Go on from the step the restart cut, with the rest of the queue">Resume</button><button id="autoCancel" class="danger">Cancel</button><button id="autoCancelAll" class="danger">Cancel all</button><button id="autoHide">Hide</button></div>
     <div id="autoSteps2"></div><small id="autoSub"></small><div id="autoHist"></div><pre id="autoTail" style="display:none"></pre></div>
   <div class="box" id="trainBar"><div class="row" style="margin:0"><b id="trainTxt"></b><span style="flex:1"></span><button id="trainLog">Log</button><button id="trainLora" class="primary">Copy LoRA</button><button id="trainScore">Score LoRA</button><button id="trainStop" class="danger">Stop training</button><button id="trainHide">Hide</button></div>
@@ -218,11 +227,19 @@ small{color:var(--mut)}
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('queueDlg').close()">Close</button><button id="queueGo" class="primary">Start the queue</button></div>
   <small id="queueMsg" class="err"></small>
 </dialog>
-<dialog id="zoom"><img alt=""><div class="row" style="justify-content:space-between;margin-top:8px"><span id="zoomInfo"></span><span><button id="zoomPrev" title="previous card (left arrow)">&lt; Prev</button> <button id="zoomNext" title="next card (right arrow)">Next &gt;</button> <button onclick="document.getElementById('zoom').close()">Close (Esc)</button></span></div></dialog>
+<dialog id="zoom"><img alt=""><div class="row" style="justify-content:space-between;margin-top:8px"><span id="zoomInfo"></span><span><button id="zoomMetaBtn" title="what the engine rendered: line, seed, model, score">Info</button> <button id="zoomCmp" title="compare with another try or card">Compare</button> <button id="zoomPrev" title="previous card (left arrow)">&lt; Prev</button> <button id="zoomNext" title="next card (right arrow)">Next &gt;</button> <button onclick="document.getElementById('zoom').close()">Close (Esc)</button></span></div><table class="meta" id="zoomMeta" style="display:none"></table></dialog>
+<dialog id="cmpDlg">
+  <h3>Compare</h3>
+  <div class="row"><label style="min-width:0">A</label><select id="cmpA" style="flex:1"></select><label style="min-width:0">B</label><select id="cmpB" style="flex:1"></select><button id="cmpSwap" title="swap A and B">Swap</button></div>
+  <div class="row"><label style="min-width:0">View</label><select id="cmpMode"><option value="slider">slider</option><option value="side">side by side</option><option value="toggle">A/B toggle (space)</option></select><input type="range" id="cmpPos" min="0" max="100" value="50" style="flex:1"></div>
+  <div id="cmpView"></div>
+  <table class="meta" id="cmpMeta"></table>
+  <div class="row" style="justify-content:flex-end;margin-top:10px"><button onclick="document.getElementById('cmpDlg').close()">Close</button></div>
+</dialog>
 
 <script>
 const $=id=>document.getElementById(id);
-let AUTO={}, AUTO_HIDDEN=null, AUTO_HLEN=null;
+let AUTO={}, AUTO_HIDDEN=null, AUTO_HLEN=null, SIMILAR={};
 // ---------- notifications ----------
 // Asked on a click that starts something long (Autopilot, Queue, Launch training): the
 // browser only shows the permission prompt on a user gesture. 127.0.0.1 counts as a
@@ -273,9 +290,9 @@ $('modelSel').onchange=()=>{const sel=$('modelSel');if(sel.value==='custom'){$('
 // ---------- projects ----------
 async function loadProjects(sel){const r=await api('projects');const s=$('projSel');s.innerHTML='';
   (r.projects||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.done}/${p.cards})`;s.appendChild(o);});
-  if(sel)s.value=sel; if(s.value)await openProject(s.value); else renderEmpty();}
+  if(sel&&[...s.options].some(o=>o.value===sel))s.value=sel; if(s.value)await openProject(s.value); else renderEmpty();}
 function renderEmpty(){P=null;renderDoneBar();$('cards').innerHTML='<p style="color:var(--mut)">No project yet: click New project.</p>';$('ref').style.display='none';}
-async function openProject(name){const r=await api('project_get',{name});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();}
+async function openProject(name){if(!P||P.name!==name)SIMILAR={};const r=await api('project_get',{name});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();}
 $('newProj').onclick=async()=>{const name=prompt('Project name (letters, digits, - _ .)');if(!name)return;
   const r=await api('project_new',{name,engine:$('engSel').value||undefined});if(!r.ok)return say(r.error,'err');await loadProjects(r.project.name);};
 $('projSel').onchange=()=>{JUST_LOT=null;openProject($('projSel').value);};
@@ -520,7 +537,7 @@ function renderCards(current){if(!P)return;renderDoneBar();const el=$('cards');e
     d.innerHTML=`<div class="img">${img}${badge(c)}<span class="idx">${String(c.index).padStart(3,'0')}${c.tries.length>1?' · '+c.tries.length+' tries':''}</span></div>
       <div class="body"><div class="prompt" title="${esc(c.prompt)}">${esc(c.prompt)}</div>
       <textarea data-cap="${c.index}" placeholder="caption">${esc(c.caption||'')}</textarea>
-      ${(c.warnings||[]).map(w=>`<div class="warn">${esc(w)}</div>`).join('')}${c.error?`<div class="err">${esc(c.error)}</div>`:''}
+      ${(c.warnings||[]).map(w=>`<div class="warn">${esc(w)}</div>`).join('')}${(SIMILAR[c.index]||[]).map(x=>`<div class="simw">${x.identical?'same image as':'too close to'} <a data-cmp="${c.index}:${x.other}">${String(x.other).padStart(3,'0')}</a>${x.identical?'':' ('+x.distance+')'}</div>`).join('')}${c.error?`<div class="err">${esc(c.error)}</div>`:''}
       <div class="btns">${c.status==='rejected'?`<button data-act="restore" data-i="${c.index}">Restore</button>`:`<button data-act="reject" data-i="${c.index}" ${c.file?'':'disabled'}>Reject</button>`}
       <button data-act="reroll" data-i="${c.index}">Re-roll</button>${c.tries.length>1?`<select data-try="${c.index}">${c.tries.map((t,i)=>`<option value="${i}" ${t.file===c.file?'selected':''}>try ${i+1}: ${t.score}</option>`).join('')}</select>`:''}</div></div>`;
     el.appendChild(d);});}
@@ -532,12 +549,60 @@ function zoomList(){return P?P.cards.filter(c=>c.file):[];}
 function showZoom(i){const list=zoomList();const c=list.find(x=>x.index===i)||list[0];if(!c)return;ZOOM_I=c.index;
   const k=list.indexOf(c);$('zoom').querySelector('img').src=`/file/${P.name}/${c.file}?t=${encodeURIComponent(c.seed??'')}`;
   $('zoomInfo').textContent=`${String(c.index).padStart(3,'0')} (${k+1}/${list.length}) · likeness ${c.scored===false?'n/s':c.score} · seed ${c.seed}`;
-  $('zoomPrev').disabled=k<=0;$('zoomNext').disabled=k>=list.length-1;}
+  showZoomMeta();$('zoomPrev').disabled=k<=0;$('zoomNext').disabled=k>=list.length-1;}
 function zoomStep(d){const list=zoomList();const k=list.findIndex(x=>x.index===ZOOM_I);if(k<0)return;const n=list[k+d];if(n)showZoom(n.index);}
 $('zoomPrev').onclick=()=>zoomStep(-1);$('zoomNext').onclick=()=>zoomStep(1);
 $('zoom').addEventListener('keydown',ev=>{if(ev.key==='ArrowLeft'){ev.preventDefault();zoomStep(-1);}else if(ev.key==='ArrowRight'){ev.preventDefault();zoomStep(1);}});
+
+// ---------- cards too close (ds_similar), metadata, compare ----------
+// Ideas from DTInspector (qxm.de DT Helper): its duplicate finder and Compare view,
+// cut down to a dataset: kept cards too close to each other are marked on the grid,
+// any two renders of the project (cards or tries) compare with a slider, side by side
+// or an A/B toggle, with the settings that differ and the words of the rendered line
+// that changed highlighted.
+async function checkSimilar(quiet){if(!P)return;const r=await api('similar',{name:P.name});if(!r.ok)return say(r.error,'err');SIMILAR={};
+  (r.pairs||[]).forEach(x=>{(SIMILAR[x.a]=SIMILAR[x.a]||[]).push({other:x.b,distance:x.distance,identical:x.identical});(SIMILAR[x.b]=SIMILAR[x.b]||[]).push({other:x.a,distance:x.distance,identical:x.identical});});
+  renderCards();if(!quiet||r.pairs.length)say(r.summary||`no kept cards too close to each other (distance <= ${r.max_distance} of 64)`,r.pairs.length?'warn':'');}
+$('doneSimilar').onclick=()=>checkSimilar(false);
+function imageList(){const out=[];(P?P.cards:[]).forEach(c=>{const tries=c.tries||[];
+  if(!tries.length&&c.file)out.push({file:c.file,label:`${String(c.index).padStart(3,'0')} (kept)`,card:c.index});
+  tries.forEach((t,i)=>out.push({file:t.file,label:`${String(c.index).padStart(3,'0')} try ${i+1}${t.score!=null?' · '+t.score:''}${t.file===c.file?' (kept)':''}`,card:c.index}));});return out;}
+const META_CACHE={};
+async function getMeta(file){const k=P.name+'/'+file;if(META_CACHE[k])return META_CACHE[k];const r=await api('image_meta',{name:P.name,file});if(r.ok)META_CACHE[k]=r;return r;}
+function metaRows(m){const c=m.card||{},z=m.crispz||{};return [
+  ['card',c.index!=null?String(c.index).padStart(3,'0')+(c.try?` try ${c.try}/${c.tries}`:'')+(c.kept?' (kept)':''):'-'],
+  ['likeness',c.score!=null?String(c.score):'-'],['flags',(c.flags||[]).join('; ')||'-'],
+  ['seed',String(z.seed??c.seed??'-')],['model',String(z.model||c.model||m.settings_model||'-')],
+  ['size',`${m.width}x${m.height}`],['engine',String(m.engine||'-')],['mode',String(z.mode||'-')],
+  ['steps',String(z.steps??'-')],['render time',c.time_s!=null?c.time_s+' s':'-'],
+  ['rendered line',String(z.prompt||c.prompt||c.line||'-')],['caption',String(c.caption||'-')]];}
+function wordDiff(a,b){const wb=new Set(String(b).toLowerCase().split(/[\s,]+/));return esc(a).split(/(\s+)/).map(w=>/\S/.test(w)&&!wb.has(w.toLowerCase().replace(/[,]/g,''))?`<mark>${w}</mark>`:w).join('');}
+async function showZoomMeta(){const t=$('zoomMeta');if(t.style.display==='none'||ZOOM_I==null)return;const c=P.cards.find(x=>x.index===ZOOM_I);if(!c||!c.file)return;
+  const m=await getMeta(c.file);if(!m.ok){t.innerHTML=`<tr><td>error</td><td>${esc(m.error)}</td></tr>`;return;}
+  t.innerHTML=metaRows(m).map(([k,v])=>`<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('');}
+$('zoomMetaBtn').onclick=()=>{const t=$('zoomMeta');t.style.display=t.style.display==='none'?'':'none';showZoomMeta();};
+$('zoomCmp').onclick=()=>{const c=P.cards.find(x=>x.index===ZOOM_I);if(!c||!c.file)return;
+  const other=(c.tries||[]).find(t=>t.file!==c.file);let b=other?other.file:null;
+  if(!b){const list=zoomList();const k=list.findIndex(x=>x.index===c.index);const n=list[k+1]||list[k-1];b=n?n.file:c.file;}
+  $('zoom').close();openCompare(c.file,b);};
+function openCompare(a,b){const list=imageList();['cmpA','cmpB'].forEach(id=>{const s=$(id);s.innerHTML=list.map(x=>`<option value="${esc(x.file)}">${esc(x.label)}</option>`).join('');});
+  $('cmpA').value=a;$('cmpB').value=b||a;$('cmpDlg').showModal();renderCmp();}
+let CMP_SHOW_B=false;
+async function renderCmp(){const a=$('cmpA').value,b=$('cmpB').value,mode=$('cmpMode').value,pos=+$('cmpPos').value;$('cmpPos').style.display=mode==='slider'?'':'none';
+  const u=f=>`/file/${P.name}/${f}`;const v=$('cmpView');
+  if(mode==='slider')v.innerHTML=`<div class="cmpview"><img src="${u(b)}"><img class="ovl" src="${u(a)}" style="clip-path:inset(0 ${100-pos}% 0 0)"><div class="bar" style="left:${pos}%"></div><span class="lab" style="left:6px">A</span><span class="lab" style="right:6px">B</span></div>`;
+  else if(mode==='side')v.innerHTML=`<div class="row" style="align-items:flex-start;flex-wrap:nowrap"><div class="cmpview" style="width:49%"><img src="${u(a)}" style="max-width:100%"><span class="lab" style="left:6px">A</span></div><div class="cmpview" style="width:49%"><img src="${u(b)}" style="max-width:100%"><span class="lab" style="left:6px">B</span></div></div>`;
+  else v.innerHTML=`<div class="cmpview"><img src="${u(CMP_SHOW_B?b:a)}"><span class="lab" style="left:6px">${CMP_SHOW_B?'B':'A'} (space)</span></div>`;
+  const [ma,mb]=await Promise.all([getMeta(a),getMeta(b)]);if(!ma.ok||!mb.ok){$('cmpMeta').innerHTML=`<tr><td>error</td><td>${esc(ma.error||mb.error)}</td></tr>`;return;}
+  const ra=metaRows(ma),rb=metaRows(mb);
+  $('cmpMeta').innerHTML='<tr><td></td><td><b>A</b></td><td><b>B</b></td></tr>'+ra.map(([k,va],i)=>{const vb=rb[i][1];const d=va!==vb;
+    const words=k==='rendered line'||k==='caption';return `<tr class="${d?'diff':''}"><td>${k}</td><td>${d&&words?wordDiff(va,vb):esc(va)}</td><td>${d&&words?wordDiff(vb,va):esc(vb)}</td></tr>`;}).join('');}
+['cmpA','cmpB','cmpMode'].forEach(id=>$(id).onchange=()=>{CMP_SHOW_B=false;renderCmp();});
+$('cmpPos').oninput=()=>{const p=+$('cmpPos').value;const o=$('cmpView').querySelector('.ovl');const bar=$('cmpView').querySelector('.bar');if(o){o.style.clipPath=`inset(0 ${100-p}% 0 0)`;bar.style.left=p+'%';}};
+$('cmpSwap').onclick=()=>{const a=$('cmpA').value;$('cmpA').value=$('cmpB').value;$('cmpB').value=a;renderCmp();};
+$('cmpDlg').addEventListener('keydown',ev=>{if(ev.key===' '&&$('cmpMode').value==='toggle'&&ev.target.tagName!=='SELECT'){ev.preventDefault();CMP_SHOW_B=!CMP_SHOW_B;renderCmp();}});
 function esc(s){return String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
-$('cards').addEventListener('click',async ev=>{const b=ev.target.closest('button[data-act]');
+$('cards').addEventListener('click',async ev=>{const cl=ev.target.closest('a[data-cmp]');if(cl){const [x,y]=cl.dataset.cmp.split(':').map(Number);const fa=(P.cards.find(c=>c.index===x)||{}).file,fb=(P.cards.find(c=>c.index===y)||{}).file;if(fa&&fb)openCompare(fa,fb);return;}const b=ev.target.closest('button[data-act]');
   if(ev.target.tagName==='IMG'){showZoom(+ev.target.dataset.i);$('zoom').showModal();return;}
   if(!b)return;const i=+b.dataset.i;let r;
   if(b.dataset.act==='reject')r=await api('card_update',{name:P.name,index:i,status:'rejected'});
@@ -549,7 +614,8 @@ $('cards').addEventListener('change',async ev=>{const t=ev.target;
   if(t.dataset.cap){const r=await api('card_update',{name:P.name,index:+t.dataset.cap,caption:t.value});if(!r.ok)say(r.error,'err');}
   if(t.dataset.try){const r=await api('card_update',{name:P.name,index:+t.dataset.try,use_try:+t.value});if(!r.ok)say(r.error,'err');await openProject(P.name);}});
 $('exportBtn').onclick=async()=>{if(!P)return;say('exporting...');const r=await api('export',{name:P.name,size:+$('expsize').value,format:$('expfmt').value});
-  if(!r.ok)return say(r.error,'err');say(`exported ${r.count} pair(s)${r.skipped.length?', skipped '+r.skipped.length:''} at ${r.size}px ${r.format} to ${r.dir}`);
+  if(!r.ok)return say(r.error,'err');say(`exported ${r.count} pair(s)${r.skipped.length?', skipped '+r.skipped.length:''} at ${r.size}px ${r.format} to ${r.dir}`+((r.warnings||[]).length?' · '+r.warnings.join(' · '):''),(r.warnings||[]).length?'warn':'');
+  if((r.warnings||[]).length)checkSimilar(true);
   const a=document.createElement('a');a.href=r.out_url;a.textContent='download '+r.zip_rel.split('/').pop();a.download='';$('log').prepend(a);
   JUST_LOT=r.lot;window.open(r.out_url,'_blank');};
 
@@ -576,6 +642,8 @@ $('setSave').onclick=async()=>{const engines={};$('engList').querySelectorAll('.
 
 // ---------- boot ----------
 (async()=>{const ps=await api('promptsets');(ps.promptsets||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.count})`;$('psSel').appendChild(o);});
-  await refreshEngines();await refreshAitk();await loadProjects();poll();setInterval(refreshEngines,15000);})();
+  // ?project=<name>: open that project (tools/send_to_studio.py, the IrfanView key)
+  let want=null;try{want=new URLSearchParams(location.search).get('project');}catch(e){}
+  await refreshEngines();await refreshAitk();await loadProjects(want||undefined);poll();setInterval(refreshEngines,15000);})();
 </script>
 </body></html>
