@@ -6,3 +6,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 out/
+
+# --- Claude Code / local tools ---
+CLAUDE.md
