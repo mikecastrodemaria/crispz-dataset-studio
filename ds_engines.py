@@ -447,18 +447,28 @@ class Engines:
                 return e
         return None
 
-    def ensure(self, name=None):
+    def ensure(self, name=None, swap=False):
         """The engine, running: probes, launches when allowed, refuses a second
-        child while one is alive (the family's VRAM rule)."""
+        child while one is alive (the family's VRAM rule). swap=True stops that other
+        child first, said in the log: the autopilot and its queue go from the dataset
+        engine to each LoRA's engine with nobody there to press Stop (an A/B queue on
+        moss / ideogram / minimax stopped at "klein is still running", 2026-11-16).
+        An engine the user started is never stopped."""
         e = self.get(name)
         if e.caps(max_age=0):
             return e, {"ok": True, "started": False}
         other = self.alive_child()
         if other is not None and other is not e:
-            return e, {"ok": False, "error": f"engine '{other.name}' (started by Dataset "
-                       f"Studio) is still running: two family apps do not fit on one "
-                       f"GPU. Stop it first (Settings > Engines)"}
-        return e, e.launch(wait=True)
+            if not swap:
+                return e, {"ok": False, "error": f"engine '{other.name}' (started by Dataset "
+                           f"Studio) is still running: two family apps do not fit on one "
+                           f"GPU. Stop it first (Settings > Engines)"}
+            _log(f"engine '{other.name}' stopped to free the GPU for '{e.name}'")
+            other.stop()
+        r = e.launch(wait=True)
+        if swap and other is not None and other is not e:
+            r = dict(r, swapped=other.name)
+        return e, r
 
     def statuses(self):
         return [e.status() for e in self.by_name.values()]

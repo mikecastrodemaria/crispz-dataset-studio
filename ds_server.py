@@ -194,6 +194,20 @@ class Studio:
         if not isinstance(cfg, dict):
             raise ValueError("config must be an object")
         cfg.setdefault("engines", {})
+        # One URL per engine: two engines on one port were taken for each other
+        # (Moss and ideogram both on 7860, 2026-11-16): the probe of one answered
+        # for the other and renders went to the wrong model.
+        seen = {}
+        for name, ec in (cfg.get("engines") or {}).items():
+            if not str(name).strip():
+                raise ValueError("an engine has no name")
+            url = str((ec or {}).get("url") or "").strip().rstrip("/").lower()
+            port = url.rsplit(":", 1)[-1] if url else ""
+            key = port if port.isdigit() and ("127.0.0.1" in url or "localhost" in url) else url
+            if key and key in seen:
+                raise ValueError(f"engines '{seen[key]}' and '{name}' share the same port ({key}): "
+                                 f"give each engine its own port")
+            seen[key] = name
         cfg.setdefault("ollama", self.config.get("ollama", {}))
         cfg.setdefault("port", self.config.get("port", DEFAULT_PORT))
         cfg.setdefault("output_dir", self.config.get("output_dir", ds_project.DEFAULT_OUTPUT_DIR))
@@ -301,7 +315,8 @@ class Studio:
         return self.runner.start(name, self.engines, self.config.get("ollama") or {},
                                  force=bool(data.get("force")), only=only,
                                  engine_name=data.get("engine") or None,
-                                 seed=data.get("seed"))
+                                 seed=data.get("seed"),
+                                 swap_engine=bool(data.get("swap_engine")))
 
     def op_cancel(self, data):
         return {"cancelled": self.runner.cancel()}
@@ -617,6 +632,7 @@ class Studio:
             seed=int(data.get("seed") if data.get("seed") not in (None, "") else ds_lorascore.DEFAULT_SEED),
             loras_dir=ds_aitoolkit.engine_loras_dir(ec.get("dir"), ec.get("loras_dir")) if ec else None,
             switch_model=bool(data.get("switch_model", True)),
+            swap_engine=bool(data.get("swap_engine")),
             size=tuple((ds_aitoolkit.PRESETS.get(ds_aitoolkit.preset_of_job(root, job)) or {})
                        .get("score_size") or ds_lorascore.DEFAULT_SIZE))
         return {"lora_score": st}
@@ -726,12 +742,20 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code, body, ctype="application/json; charset=utf-8"):
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        # The page may be gone by the time a long op answers (an engine launch, a
+        # reload during a run): the browser dropped the connection, the op itself
+        # finished. One log line instead of socketserver's traceback (WinError 10053,
+        # 2026-11-16).
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            log(f"{self.command} {self.path.split('?', 1)[0]}: the page closed the connection "
+                f"before the answer (reloaded or closed); the operation itself completed")
 
     def _json(self, obj, code=200):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))

@@ -137,3 +137,31 @@ def test_project_flow_over_http(studio):
     assert ei.value.code == 404
     assert post(studio, "projects")["projects"][0]["done"] == 1
     assert post(studio, "promptsets")["promptsets"][0]["count"] == 25
+
+
+def test_config_refuses_engines_sharing_a_port(studio):
+    cfg = post(studio, "config_get")["config"]
+    cfg["engines"]["moss"] = {"url": "http://127.0.0.1:7860", "dir": "D:/Github/crispz-moss"}
+    cfg["engines"]["ideogram"] = {"url": "http://localhost:7860/", "dir": "D:/Github/crispz-ideogram"}
+    r = post(studio, "config_set", {"config": cfg})
+    assert not r["ok"] and "share the same port" in r["error"] and "7860" in r["error"]
+    cfg["engines"]["ideogram"]["url"] = "http://127.0.0.1:7865"
+    assert post(studio, "config_set", {"config": cfg})["ok"]
+    cfg["engines"][" "] = {"url": "http://127.0.0.1:7866", "dir": "D:/Github/crispz-minimax"}
+    r = post(studio, "config_set", {"config": cfg})
+    assert not r["ok"] and "no name" in r["error"]
+
+
+def test_a_dropped_connection_is_one_log_line(monkeypatch):
+    lines = []
+    monkeypatch.setattr(ds_server, "log", lines.append)
+    h = ds_server.Handler.__new__(ds_server.Handler)
+    h.command, h.path = "POST", "/api/engine_launch?x=1"
+    h.send_response = h.send_header = h.end_headers = lambda *a, **k: None
+
+    class W:
+        def write(self, b):
+            raise ConnectionAbortedError(10053, "aborted")
+    h.wfile = W()
+    h._send(200, b"{}")
+    assert len(lines) == 1 and "POST /api/engine_launch" in lines[0] and "closed" in lines[0]
