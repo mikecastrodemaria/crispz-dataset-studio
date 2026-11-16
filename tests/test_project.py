@@ -284,6 +284,32 @@ def test_copy_check_flags_the_reference_handed_back(projects, engines, tmp_path)
     assert any(w.startswith("kept try is flagged") for w in c["warnings"])
 
 
+def test_a_run_stops_after_tries_in_a_row_copied_back(projects, engines, tmp_path):
+    """2026-11-16: an engine answered every edit with the reference itself; the run
+    went on card after card. It now stops after copy_stop tries in a row, says why,
+    and keeps what it rendered. A good try resets the count; 0 turns the stop off."""
+    p = ds_project.create("stop", engine="fake")
+    ds_project.update_settings(p, {"prompts": ["same person, COPY a", "same person, COPY b",
+                                               "same person, COPY c", "same person, d"],
+                                   "max_rerolls": 1, "threshold": 0, "width": 64,
+                                   "height": 64, "copy_stop": 3})
+    ds_project.set_reference(ds_project.load("stop"), textured_png(), engine=None)
+    runner = ds_project.RUNNER
+    assert runner.start("stop", engines, {}, force=False)["ok"] and runner.wait(60)
+    st = runner.state
+    assert st["ok"] is False and "in a row came back as the reference" in st["error"]
+    cards = ds_project.load("stop")["cards"]
+    # card 1: 2 copies, card 2: the 3rd copy stops it; cards 3 and 4 never rendered
+    assert [c["status"] for c in cards] == ["done", "done", "pending", "pending"]
+    assert len(cards[1]["tries"]) == 1
+    # the stop turned off: every card is rendered
+    p = ds_project.load("stop")
+    ds_project.update_settings(p, {"copy_stop": 0})
+    assert ds_project.load("stop")["settings"]["copy_stop"] == 0
+    assert runner.start("stop", engines, {}, force=False)["ok"] and runner.wait(60)
+    assert [c["status"] for c in ds_project.load("stop")["cards"]] == ["done"] * 4
+
+
 def test_artifact_check_asks_ollama_and_prefers_a_clean_try(projects, engines, monkeypatch):
     answers = iter(["YES, the face is doubled", "No, clean"])
     asked = []
