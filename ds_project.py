@@ -101,6 +101,11 @@ DEFAULT_SETTINGS = {
     # reference copied back (correlation >= 0.9) or, with Ollama, one with ghosting
     # or doubling is flagged and re-rolled like a low score.
     "copy_check": True, "artifact_check": False,
+    # Stop the run after this many tries IN A ROW flagged "reference copied back" (0 =
+    # never). 2026-11-16: an engine answered every edit with the reference itself
+    # (similarity 0.93 to 1.00 on six tries in a row); the run would have gone on for
+    # 25 cards x 3 tries, about 80 minutes of copies.
+    "copy_stop": 3,
     # The engine's checkpoint for this project (spec.model, the protocol's per-call
     # switch: klein calls set_zimage_model). Empty = the engine's own setting. Added
     # on 2026-10-29 so a dataset can run on klein-4B while the user's app stays on 9B.
@@ -378,6 +383,11 @@ def update_settings(p, new):
         s["fast"] = ""
     s["copy_check"] = bool(s.get("copy_check", True))
     s["artifact_check"] = bool(s.get("artifact_check"))
+    try:
+        s["copy_stop"] = max(0, min(30, int(s.get("copy_stop") if s.get("copy_stop")
+                                            not in (None, "") else 3)))
+    except (TypeError, ValueError):
+        s["copy_stop"] = 3
     s["subject"] = " ".join(str(s.get("subject") or "").split())
     s["tag_prefix"] = " ".join(str(s.get("tag_prefix") or "").split())
     try:
@@ -563,6 +573,8 @@ class Runner:
             d = project_dir(p["name"])
             ref = os.path.join(d, p["reference"])
             s = p["settings"]
+            self._copy_streak = 0
+            self._copy_stop = None
             for n, card in enumerate(todo, start=1):
                 if self.cancel_flag:
                     self._say(f"cancelled after {n - 1} card(s)")
@@ -571,6 +583,8 @@ class Runner:
                 self._render_card(engine, p, card, ref, d, s, ollama_cfg, fresh, base_seed)
                 save(p)
                 self.state["done"] = n
+                if self._copy_stop:
+                    raise RuntimeError(self._copy_stop)
             self.state["ok"] = not self.cancel_flag
         except Exception as e:
             self.state["ok"] = False
@@ -678,10 +692,25 @@ class Runner:
             self._say(f"card {idx:03d} try {t}: likeness {score} "
                       f"({detail.get('reason') or 'cos ' + str(detail.get('cosine'))}), "
                       f"{tr['time_s']} s" + (f"; FLAGGED: {'; '.join(flags)}" if flags else ""))
+            if any(f.startswith("looks like the reference copied back") for f in flags):
+                self._copy_streak = getattr(self, "_copy_streak", 0) + 1
+            else:
+                self._copy_streak = 0
+            limit = int(s.get("copy_stop", 3) or 0)
+            if limit and self._copy_streak >= limit:
+                self._copy_stop = (
+                    f"stopped: {self._copy_streak} tries in a row came back as the reference "
+                    f"itself (engine '{engine.name}'): it does not vary the image, the dataset "
+                    f"would be copies of the reference. Check one edit by hand in the app, or "
+                    f"render with klein, flux3 or qwen-edit. Setting copy_stop = 0 turns this "
+                    f"stop off")
+                self._say(self._copy_stop)
             # the best try: an unflagged one first, then the score
             if best is None or (not flags, score) > (not best.get("flags"), best["score"]):
                 best = tr
             if not scored or (score >= int(s.get("threshold") or 0) and not flags):
+                break
+            if getattr(self, "_copy_stop", None):
                 break
         if best is None:
             card["status"] = "failed"
