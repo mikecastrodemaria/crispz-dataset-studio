@@ -43,7 +43,7 @@ textarea{width:100%;min-height:120px;resize:vertical;font-family:ui-monospace,Co
 #bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;width:100%;position:absolute;left:0;bottom:0}
 #bar i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);margin-right:5px}.dot.on{background:var(--ok)}
-dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;max-width:760px;width:92vw;padding:14px;overflow:hidden}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;max-width:760px;width:92vw;padding:14px;max-height:92vh;overflow:auto;overscroll-behavior:contain}
 #zoom{width:fit-content;max-width:96vw;max-height:96vh;padding:8px;overflow:auto}
 .meta{font-size:12px;border-collapse:collapse;margin-top:6px;max-width:900px}.meta td{padding:2px 8px;border-bottom:1px solid var(--line);vertical-align:top}.meta td:first-child{color:var(--mut);white-space:nowrap}
 .meta tr.diff td{background:#e0a12f1f}.meta mark{background:#4f8cff55;color:var(--fg);border-radius:3px;padding:0 2px}
@@ -634,9 +634,15 @@ $('settingsBtn').onclick=async()=>{const r=await api('config_get');CFG=r.config;
   s.value=cur;$('olMsg').textContent=m.message||((m.models||[]).length?`${m.models.length} vision model(s) of ${m.installed} installed`:(m.installed?'' :'Ollama not reachable'));$('setMsg').textContent=r.exists?`writes ${r.config_file}`:`no config.json yet: Save creates ${r.config_file}`;$('settings').showModal();};
 $('addEng').onclick=()=>$('engList').appendChild(engRow('',{url:'http://127.0.0.1:7861',launch:true}));
 $('setCancel').onclick=()=>$('settings').close();
-$('setSave').onclick=async()=>{const engines={};$('engList').querySelectorAll('.eng').forEach(d=>{const n=d.querySelector('.n').value.trim();if(!n)return;
+$('setSave').onclick=async()=>{const engines={};const errs=[];$('engList').querySelectorAll('.eng').forEach(d=>{const n=d.querySelector('.n').value.trim();
+    // an engine card with a folder or URL but no name used to vanish on save (crispz-minimax, 2026-11-16): said instead
+    if(!n){if(d.querySelector('.d').value.trim())errs.push(`the engine with folder ${d.querySelector('.d').value.trim()} has no name`);return;}
+    if(engines[n])errs.push(`two engines are named ${n}`);
     engines[n]={url:d.querySelector('.u').value.trim(),dir:d.querySelector('.d').value.trim(),launch:d.querySelector('.l').checked};const p=d.querySelector('.p').value.trim();if(p)engines[n].python=p;});
   const cfg=Object.assign({},CFG,{output_dir:$('outDir').value.trim()||'out',ai_toolkit_dir:$('aitkDirSet').value.trim(),date_subfolders:$('outDate').checked,engines,ollama:{url:$('olUrl').value.trim(),model:$('olModel').value,keep_alive:(CFG.ollama||{}).keep_alive??0}});
+  const byPort={};Object.entries(engines).forEach(([n,e])=>{const m=String(e.url||'').match(/:(\d+)\/?$/);const k=m?m[1]:e.url;(byPort[k]=byPort[k]||[]).push(n);});
+  Object.entries(byPort).forEach(([k,ns])=>{if(ns.length>1)errs.push(`${ns.join(' and ')} share port ${k}: give each engine its own port`);});
+  if(errs.length){$('setMsg').textContent='Not saved: '+errs.join('; ');$('setMsg').className='err';$('setMsg').scrollIntoView({block:'nearest'});return;}$('setMsg').className='';
   if(!cfg.engine||!engines[cfg.engine])cfg.engine=Object.keys(engines)[0]||'';
   const r=await api('config_set',{config:cfg});if(!r.ok){$('setMsg').textContent=r.error;return;}$('settings').close();refreshEngines();await refreshAitk();say(AITK&&AITK.error?AITK.error:'settings saved',AITK&&AITK.error?'warn':'');};
 

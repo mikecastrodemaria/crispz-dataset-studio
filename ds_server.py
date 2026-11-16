@@ -194,6 +194,20 @@ class Studio:
         if not isinstance(cfg, dict):
             raise ValueError("config must be an object")
         cfg.setdefault("engines", {})
+        # One URL per engine: two engines on one port were taken for each other
+        # (Moss and ideogram both on 7860, 2026-11-16): the probe of one answered
+        # for the other and renders went to the wrong model.
+        seen = {}
+        for name, ec in (cfg.get("engines") or {}).items():
+            if not str(name).strip():
+                raise ValueError("an engine has no name")
+            url = str((ec or {}).get("url") or "").strip().rstrip("/").lower()
+            port = url.rsplit(":", 1)[-1] if url else ""
+            key = port if port.isdigit() and ("127.0.0.1" in url or "localhost" in url) else url
+            if key and key in seen:
+                raise ValueError(f"engines '{seen[key]}' and '{name}' share the same port ({key}): "
+                                 f"give each engine its own port")
+            seen[key] = name
         cfg.setdefault("ollama", self.config.get("ollama", {}))
         cfg.setdefault("port", self.config.get("port", DEFAULT_PORT))
         cfg.setdefault("output_dir", self.config.get("output_dir", ds_project.DEFAULT_OUTPUT_DIR))

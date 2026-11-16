@@ -137,3 +137,16 @@ def test_project_flow_over_http(studio):
     assert ei.value.code == 404
     assert post(studio, "projects")["projects"][0]["done"] == 1
     assert post(studio, "promptsets")["promptsets"][0]["count"] == 25
+
+
+def test_config_refuses_engines_sharing_a_port(studio):
+    cfg = post(studio, "config_get")["config"]
+    cfg["engines"]["moss"] = {"url": "http://127.0.0.1:7860", "dir": "D:/Github/crispz-moss"}
+    cfg["engines"]["ideogram"] = {"url": "http://localhost:7860/", "dir": "D:/Github/crispz-ideogram"}
+    r = post(studio, "config_set", {"config": cfg})
+    assert not r["ok"] and "share the same port" in r["error"] and "7860" in r["error"]
+    cfg["engines"]["ideogram"]["url"] = "http://127.0.0.1:7865"
+    assert post(studio, "config_set", {"config": cfg})["ok"]
+    cfg["engines"][" "] = {"url": "http://127.0.0.1:7866", "dir": "D:/Github/crispz-minimax"}
+    r = post(studio, "config_set", {"config": cfg})
+    assert not r["ok"] and "no name" in r["error"]
