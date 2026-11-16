@@ -130,6 +130,37 @@ PRESETS = {
                   "gated": True, "engine": "crispz-ideogram",
                   "note": "experimental in ai-toolkit; Ideogram 4 learnt on JSON captions and "
                           "the dataset's are plain text; non-commercial licence"},
+    # 2026-11-16, ai-toolkit of 2026-11-13: MOSS-Image SFT (crispz-moss's model) and
+    # MiniMax-H3-Image (crispz-minimax's; ai-toolkit's "minimax_h3" is the video model).
+    "moss": {"label": "MOSS-Image SFT", "arch": "moss_image",
+             "name_or_path": "OpenMOSS-Team/MOSS-Image-SFT",
+             "model": {"quantize": True, "qtype": "convrot8", "quantize_te": True,
+                       "qtype_te": "convrot8", "low_vram": True,
+                       "model_kwargs": {"uncond_skip_layers": [22]}},
+             # the LoRA stays off block 22, the one CFG's negative branch skips
+             "network": {"network_kwargs": {"ignore_if_contains": ["layers.22."]}},
+             "train": {"timestep_type": "shift"},
+             "sample": dict(_SAMPLE, guidance=3, steps=30),
+             "engine": "crispz-moss",
+             "note": "for crispz-moss (MOSS-Image SFT, Apache 2.0: commercial use allowed); "
+                     "Qwen3.5-9B text encoder, 8-bit"},
+    "minimax_image": {"label": "MiniMax-H3-Image (training adapter)", "arch": "minimax_h3_image",
+                      "name_or_path": "Comfy-Org/MiniMax-H3-Image",
+                      "model": {"quantize": True, "qtype": "convrot8", "quantize_te": True,
+                                "qtype_te": "nvfp4", "low_vram": False,
+                                "assistant_lora_path":
+                                "ostris/minimax_h3_training_adapter/"
+                                "minimax_h3_image_training_adapter_v1.safetensors"},
+                      "network": {"network_kwargs": {"ignore_if_contains": ["adaln_proj"]}},
+                      "train": {"timestep_type": "shift", "cache_text_embeddings": True},
+                      "sample": dict(_SAMPLE, width=2048, height=2048, guidance=1, steps=6),
+                      # trained for 4 to 20 MP: the 2K buckets, and a 2K score render
+                      "res": (1024, 1536, 2048), "min_export": 2048,
+                      "score_size": (1536, 2048),
+                      "engine": "crispz-minimax",
+                      "note": "for crispz-minimax; 6-step distilled, the adapter keeps the LoRA "
+                              "from undoing it; made for 2K and more (export at 2048); about "
+                              "38 GB to download; nvfp4 text encoder (Blackwell)"},
 }
 DEFAULT_PRESET = "klein4b"
 DEFAULT_STEPS = 1500
@@ -199,7 +230,8 @@ _ENGINE_ALIASES = {"crispz-studio": ("studio", "zimage", "z-image", "crispz-zima
                    "crispz-qwen-edit": ("qwen-edit", "qwen", "qwen-image"),
                    "crispz-klein": ("klein",), "crispz-flux3": ("flux3",),
                    "crispz-krea": ("krea",), "crispz-krea2": ("krea2",),
-                   "crispz-sdxl": ("sdxl",), "crispz-ideogram": ("ideogram",)}
+                   "crispz-sdxl": ("sdxl",), "crispz-ideogram": ("ideogram",),
+                   "crispz-moss": ("moss",), "crispz-minimax": ("minimax",)}
 
 
 def engine_for_preset(preset, engines):
@@ -281,6 +313,9 @@ def _yaml_kv(key, value, indent):
     pad = " " * indent
     if isinstance(value, dict):
         return [f"{pad}{key}:"] + [l for k, v in value.items() for l in _yaml_kv(k, v, indent + 2)]
+    if isinstance(value, (list, tuple)):
+        # a flow list: JSON is valid YAML ([22], ["layers.22."])
+        return [f"{pad}{key}: {json.dumps(list(value), ensure_ascii=False)}"]
     return [f"{pad}{key}: {_q(value)}"]
 
 
@@ -305,6 +340,10 @@ def build_config(job, dataset_path, preset, steps, trigger, sample_prompts, reso
         "        type: \"lora\"",
         "        linear: 16",
         "        linear_alpha: 16",
+    ]
+    for k, v in pr.get("network", {}).items():
+        lines += _yaml_kv(k, v, 8)
+    lines += [
         "      save:",
         "        dtype: \"float16\"",
         "        save_every: 250",
@@ -440,7 +479,12 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None, c
     else:
         trigger = trig
     size = int(s.get("export_size") or 1024)
-    res = [r for r in (512, 768, 1024) if r <= size] or [512]
+    buckets = PRESETS[preset].get("res") or (512, 768, 1024)
+    res = [r for r in buckets if r <= size] or [min(buckets)]
+    if PRESETS[preset].get("min_export") and size < PRESETS[preset]["min_export"]:
+        warnings.append(f"{PRESETS[preset]['label']} is made for {PRESETS[preset]['min_export']} px "
+                        f"and more: set Export long side to {PRESETS[preset]['min_export']} "
+                        f"(now {size}), lower resolutions train more artifacts")
     text = build_config(job, dst, preset, steps, trigger, _sample_prompts(captions, trig), res,
                         name_or_path=model_path)
     cfg_path = os.path.join(root, "config", job + ".yaml")

@@ -880,3 +880,62 @@ def test_recaption_over_http(studio, tmp_path):  # noqa: F811
     assert {p["name"] for p in st["presets"]} >= {"klein4b", "flux3", "zimage_turbo", "sdxl",
                                                   "krea", "krea2_turbo", "qwen_image", "ideogram4"}
     assert [p["tested"] for p in st["presets"] if p["name"] == "klein4b"] == [True]
+
+
+# ------------------------------------------------------------------ MOSS, MiniMax-H3-Image (2026-11-16)
+def test_moss_and_minimax_presets(tmp_path):
+    mo = ds_aitoolkit.build_config("j", "/d", "moss", 1500, None, ["tok, a"], [1024])
+    assert 'arch: "moss_image"' in mo and 'name_or_path: "OpenMOSS-Team/MOSS-Image-SFT"' in mo
+    assert "uncond_skip_layers: [22]" in mo
+    assert 'network_kwargs:\n          ignore_if_contains: ["layers.22."]' in mo
+    assert "guidance_scale: 3" in mo and "sample_steps: 30" in mo
+    mm = ds_aitoolkit.build_config("j", "/d", "minimax_image", 1500, None, ["tok, a"], [1024])
+    assert 'arch: "minimax_h3_image"' in mm and 'qtype_te: "nvfp4"' in mm
+    assert "minimax_h3_image_training_adapter_v1.safetensors" in mm
+    assert "cache_text_embeddings: true" in mm and "sample_steps: 6" in mm
+    assert "width: 2048" in mm and '["adaln_proj"]' in mm
+    root = fake_aitk(tmp_path)
+    lot = make_lot(tmp_path / "lot", trigger="tok")
+    p = {"name": "mm", "settings": {"trigger_word": "tok", "export_size": 1024}}
+    r = ds_aitoolkit.create_job(p, str(lot), {"ai_toolkit_dir": str(root)}, preset="minimax_image")
+    text = open(r["config_path"], encoding="utf-8").read()
+    assert "resolution: [1024]" in text and any("2048" in w for w in r["warnings"])
+    p["settings"]["export_size"] = 2048
+    r = ds_aitoolkit.create_job(p, str(lot), {"ai_toolkit_dir": str(root)}, preset="minimax_image")
+    assert "resolution: [1024, 1536, 2048]" in open(r["config_path"], encoding="utf-8").read()
+    assert not any("export at" in w.lower() or "long side" in w for w in r["warnings"])
+    assert ds_aitoolkit.preset_of_job(str(root), r["job"]) == "minimax_image"
+    eng = {"moss": {"dir": ""}, "mm": {"dir": "D:/Github/crispz-minimax"},
+           "ideo": {"dir": "D:/Github/crispz-ideogram"}}
+    assert ds_aitoolkit.engine_for_preset("moss", eng) == "moss"
+    assert ds_aitoolkit.engine_for_preset("minimax_image", eng) == "mm"
+    assert ds_aitoolkit.engine_for_preset("ideogram4", eng) == "ideo"
+
+
+def test_minimax_score_renders_at_2k(studio, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ds_lorascore, "SCORER", ds_lorascore.Scorer())
+    fake_engine.STATE.update({"gens": [], "model": None, "lora_skip": False,
+                              "lora_color": (10, 200, 30), "can_switch": False})
+    root = fake_aitk(tmp_path / "tk")
+    app = tmp_path / "crispz-minimax"
+    app.mkdir()
+    cfg = post(studio, "config_get")["config"]
+    cfg["ai_toolkit_dir"] = str(root)
+    cfg["engines"]["fake"]["dir"] = str(app)
+    post(studio, "config_set", {"config": cfg})
+    post(studio, "project_new", {"name": "m"})
+    post(studio, "project_settings", {"name": "m", "settings": {"trigger_word": "tok"}})
+    post(studio, "set_reference", {"name": "m", "data": data_url((10, 200, 30))})
+    p = ds_project.load("m")
+    job = ds_aitoolkit.create_job(p, str(make_lot(tmp_path / "lot")), cfg,
+                                  preset="minimax_image")["job"]
+    p = ds_project.load("m")
+    p["last_aitk"] = {"job": job}
+    ds_project.save(p)
+    (root / "output" / job).mkdir(parents=True)
+    (root / "output" / job / (job + ".safetensors")).write_bytes(b"lora")
+    t = post(studio, "lora_targets", {"name": "m"})
+    assert t["default_engine"] == "fake" and "crispz-minimax" in t["hint"]   # by its folder
+    assert post(studio, "lora_score", {"name": "m", "prompts": "close-up"})["ok"]
+    assert _wait_score()["ok"]
+    assert {(sp["width"], sp["height"]) for sp in fake_engine.STATE["gens"]} == {(1536, 2048)}

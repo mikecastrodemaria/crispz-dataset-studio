@@ -616,7 +616,9 @@ class Studio:
             weight=float(data.get("weight") or 1.0), baseline=bool(data.get("baseline", True)),
             seed=int(data.get("seed") if data.get("seed") not in (None, "") else ds_lorascore.DEFAULT_SEED),
             loras_dir=ds_aitoolkit.engine_loras_dir(ec.get("dir"), ec.get("loras_dir")) if ec else None,
-            switch_model=bool(data.get("switch_model", True)))
+            switch_model=bool(data.get("switch_model", True)),
+            size=tuple((ds_aitoolkit.PRESETS.get(ds_aitoolkit.preset_of_job(root, job)) or {})
+                       .get("score_size") or ds_lorascore.DEFAULT_SIZE))
         return {"lora_score": st}
 
     def op_lora_keep_best(self, data):
