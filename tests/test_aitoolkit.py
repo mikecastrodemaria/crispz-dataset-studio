@@ -912,6 +912,23 @@ def test_moss_and_minimax_presets(tmp_path):
     assert ds_aitoolkit.engine_for_preset("ideogram4", eng) == "ideo"
 
 
+def test_moss_base_preset_trains_on_base_and_maps_back(tmp_path):
+    """Base and SFT share the arch: the job is told apart by its repo, and both are
+    scored on crispz-moss."""
+    mb = ds_aitoolkit.build_config("j", "/d", "moss_base", 1500, None, ["tok, a"], [1024])
+    assert 'arch: "moss_image"' in mb and 'name_or_path: "OpenMOSS-Team/MOSS-Image-Base"' in mb
+    assert "uncond_skip_layers: [22]" in mb and '["layers.22."]' in mb
+    root = fake_aitk(tmp_path)
+    lot = make_lot(tmp_path / "lot", trigger="tok")
+    p = {"name": "mb", "settings": {"trigger_word": "tok", "export_size": 1024}}
+    rb = ds_aitoolkit.create_job(p, str(lot), {"ai_toolkit_dir": str(root)}, preset="moss_base")
+    rs = ds_aitoolkit.create_job(p, str(lot), {"ai_toolkit_dir": str(root)}, preset="moss")
+    assert ds_aitoolkit.preset_of_job(str(root), rb["job"]) == "moss_base"
+    assert ds_aitoolkit.preset_of_job(str(root), rs["job"]) == "moss"
+    assert rb["job"] != rs["job"]
+    assert ds_aitoolkit.engine_for_preset("moss_base", {"moss": {"dir": ""}}) == "moss"
+
+
 def test_minimax_score_renders_at_2k(studio, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setattr(ds_lorascore, "SCORER", ds_lorascore.Scorer())
     fake_engine.STATE.update({"gens": [], "model": None, "lora_skip": False,

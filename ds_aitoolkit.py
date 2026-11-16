@@ -144,6 +144,23 @@ PRESETS = {
              "engine": "crispz-moss",
              "note": "for crispz-moss (MOSS-Image SFT, Apache 2.0: commercial use allowed); "
                      "Qwen3.5-9B text encoder, 8-bit"},
+    # MOSS-Image Base, the model OpenMOSS publishes as the base for LoRAs (SFT is its
+    # fine-tune: same DiT, same layer names). A LoRA trained here loads on SFT in
+    # crispz-moss as it is; usually a little lower weight there (0.7 to 0.9). Scored on
+    # whatever crispz-moss runs (SFT by default): the A/B of 2026-11-16 compares a
+    # Base-trained and an SFT-trained LoRA on the same SFT renders.
+    "moss_base": {"label": "MOSS-Image Base (LoRA used on SFT)", "arch": "moss_image",
+                  "name_or_path": "OpenMOSS-Team/MOSS-Image-Base",
+                  "model": {"quantize": True, "qtype": "convrot8", "quantize_te": True,
+                            "qtype_te": "convrot8", "low_vram": True,
+                            "model_kwargs": {"uncond_skip_layers": [22]}},
+                  "network": {"network_kwargs": {"ignore_if_contains": ["layers.22."]}},
+                  "train": {"timestep_type": "shift"},
+                  "sample": dict(_SAMPLE, guidance=3, steps=30),
+                  "engine": "crispz-moss",
+                  "note": "MOSS-Image Base, the base OpenMOSS publishes for LoRAs (Apache 2.0); "
+                          "the LoRA loads on SFT in crispz-moss, often at 0.7 to 0.9; scored "
+                          "on the model crispz-moss runs (SFT by default)"},
     "minimax_image": {"label": "MiniMax-H3-Image (training adapter)", "arch": "minimax_h3_image",
                       "name_or_path": "Comfy-Org/MiniMax-H3-Image",
                       "model": {"quantize": True, "qtype": "convrot8", "quantize_te": True,

@@ -37,7 +37,7 @@
    its own: the dialog gives the command line, or the dataset is in ai-toolkit's UI.
    A new job never overwrites an earlier one (`_v2`, `_v3`).
    Models beyond Klein (2026-11-02, 2026-11-16): FLUX.3 Image Klein, Z-Image Turbo,
-   Qwen-Image, FLUX.1 Krea dev, Krea 2 Turbo, Ideogram 4, MOSS-Image SFT (crispz-moss),
+   Qwen-Image, FLUX.1 Krea dev, Krea 2 Turbo, Ideogram 4, MOSS-Image SFT or Base (crispz-moss; a Base LoRA runs on SFT),
    MiniMax-H3-Image (crispz-minimax: made for 2K and more, export at 2048, scored at
    1536x2048) and an SDXL checkpoint, with ai-toolkit's
    own defaults for each (marked "not tested" until a training on the 5090 confirms
