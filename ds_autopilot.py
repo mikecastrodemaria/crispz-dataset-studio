@@ -266,7 +266,7 @@ class Autopilot:
 
     def _do_dataset(self, studio, name, o):
         self._step("dataset")
-        r = studio.op("run", {"name": name, "engine": o.get("engine")})
+        r = studio.op("run", {"name": name, "engine": o.get("engine"), "swap_engine": True})
         if not r.get("ok"):
             raise RuntimeError(r.get("error"))
         if r.get("started"):
@@ -371,7 +371,7 @@ class Autopilot:
             return
         files = [l["file"] for l in (t.get("loras") or [])][:3]   # final + 2 latest saves
         r = studio.op("lora_score", {"name": name, "job": job, "engine": eng, "files": files,
-                                     "switch_model": True})
+                                     "switch_model": True, "swap_engine": True})
         if not r.get("ok"):
             raise RuntimeError(r.get("error"))
         self._say(f"score: {len(files)} LoRA file(s) on {eng}")

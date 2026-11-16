@@ -152,3 +152,20 @@ def test_stop_never_kills_an_engine_we_did_not_start(running_engine):
     r = running_engine.stop()
     assert not r["ok"] and "not started by Dataset Studio" in r["error"]
     assert running_engine.caps(max_age=0) is not None
+
+
+def test_ensure_swaps_the_engine_we_started_only_when_asked(monkeypatch):
+    reg = ds_engines.Engines({"engine": "klein", "engines": {
+        "klein": {"url": "http://127.0.0.1:1", "launch": True},
+        "moss": {"url": "http://127.0.0.1:2", "launch": True}}})
+    klein, moss = reg.get("klein"), reg.get("moss")
+    calls = []
+    monkeypatch.setattr(type(moss), "caps", lambda self, max_age=5.0, timeout=4: None)
+    monkeypatch.setattr(reg, "alive_child", lambda: klein)
+    monkeypatch.setattr(type(klein), "stop", lambda self, timeout=20: calls.append(("stop", self.name)) or {"ok": True})
+    monkeypatch.setattr(type(moss), "launch", lambda self, wait=True: calls.append(("launch", self.name)) or {"ok": True, "started": True})
+    e, r = reg.ensure("moss")                         # by hand: refused, said
+    assert not r["ok"] and "klein" in r["error"] and calls == []
+    e, r = reg.ensure("moss", swap=True)              # autopilot: klein stopped, moss started
+    assert r["ok"] and r["swapped"] == "klein"
+    assert calls == [("stop", "klein"), ("launch", "moss")]

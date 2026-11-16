@@ -496,7 +496,7 @@ class Runner:
         return False
 
     def start(self, name, engines, ollama_cfg, force=False, only=None, engine_name=None,
-              seed=None):
+              seed=None, swap_engine=False):
         """force on the WHOLE project (only=None) renders every card from scratch: its
         earlier tries are deleted. force on some cards (only=...) is the Re-roll: the
         card gets more tries and keeps the earlier ones, but only those rendered with
@@ -523,7 +523,7 @@ class Runner:
             fresh = bool(force) and only is None
             self.thread = threading.Thread(
                 target=self._run, args=(p, engines, ollama_cfg, todo, engine_name, fresh,
-                                        None if seed is None else int(seed)),
+                                        None if seed is None else int(seed), bool(swap_engine)),
                 daemon=True, name="ds-run")
             self.thread.start()
             return {"ok": True, "started": True, "total": len(todo)}
@@ -534,11 +534,12 @@ class Runner:
         return not self.state["running"]
 
     # -- the loop -------------------------------------------------------------
-    def _run(self, p, engines, ollama_cfg, todo, engine_name, fresh=False, base_seed=None):
+    def _run(self, p, engines, ollama_cfg, todo, engine_name, fresh=False, base_seed=None,
+             swap_engine=False):
         try:
             name = engine_name or p.get("engine") or None
             self._say(f"engine: checking {name or engines.default}")
-            engine, r = engines.ensure(name)
+            engine, r = engines.ensure(name, swap=swap_engine)
             if not r.get("ok"):
                 raise RuntimeError(r.get("error"))
             if r.get("started"):

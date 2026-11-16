@@ -108,7 +108,7 @@ class Scorer:
 
     def start(self, name, engines, engine_name, root, job, files, prompts=None,
               weight=1.0, baseline=True, seed=DEFAULT_SEED, size=DEFAULT_SIZE,
-              steps=None, loras_dir=None, switch_model=True):
+              steps=None, loras_dir=None, switch_model=True, swap_engine=False):
         with self.lock:
             if self.state["running"]:
                 raise RuntimeError("a LoRA scoring is already running")
@@ -138,7 +138,7 @@ class Scorer:
                           "job": job, "started": time.time()}
             args = (p["name"], engines, engine_name, root, job,
                     [all_loras[f] for f in files], full, float(weight), bool(baseline),
-                    int(seed), size, steps, loras_dir, bool(switch_model))
+                    int(seed), size, steps, loras_dir, bool(switch_model), bool(swap_engine))
             self.thread = threading.Thread(target=self._run, args=args, daemon=True,
                                            name="ds-lora-score")
             self.thread.start()
@@ -180,11 +180,11 @@ class Scorer:
         return ds_likeness.score(ref_emb, faces)
 
     def _run(self, name, engines, engine_name, root, job, loras, prompts, weight,
-             baseline, seed, size, steps, loras_dir, switch_model=True):
+             baseline, seed, size, steps, loras_dir, switch_model=True, swap_engine=False):
         try:
             p = ds_project.load(name)
             self._say(f"engine: checking {engine_name or engines.default}")
-            engine, r = engines.ensure(engine_name or None)
+            engine, r = engines.ensure(engine_name or None, swap=swap_engine)
             if not r.get("ok"):
                 raise RuntimeError(r.get("error"))
             caps = engine.caps(max_age=0) or {}

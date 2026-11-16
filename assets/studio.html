@@ -364,6 +364,10 @@ $('engineBtn').onclick=async()=>{const e=ENGINES.find(x=>x.name===$('engSel').va
 
 // ---------- run ----------
 function runLabel(){$('runBtn').textContent=$('autoChk').checked?'Run + LoRA':'Run';}
+// Another engine Dataset Studio started holds the GPU: ask before stopping it (the
+// autopilot does it on its own). true = stop it, false = nothing to stop, null = cancel.
+function askSwap(name){const o=ENGINES.find(e=>e.running&&e.started_by_us&&e.name!==name);if(!o)return false;
+  return confirm(`The engine '${o.name}' started by Dataset Studio holds the GPU. Stop it and start '${name||'the default engine'}'?`)?true:null;}
 function presetLabel(p){return p.label+(p.tested?'':' (not tested)');}
 function fillAutoPresets(cur){const s=$('autoPreset');if(!AITK||!AITK.presets)return;s.innerHTML='';
   AITK.presets.forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=presetLabel(p);o.title=p.note;s.appendChild(o);});
@@ -386,7 +390,8 @@ function renderRecap(rc){if(!rc||!rc.project)return;const mine=P&&rc.project===P
 $('runBtn').onclick=async()=>{if(!P)return;
   if($('autoChk').checked){askNotify();if(!AITK||!AITK.root)return say('the autopilot needs the AI-Toolkit folder: set it in Settings','err');
     const a=await api('autopilot_start',{name:P.name,engine:$('engSel').value||undefined});if(!a.ok)return say(a.error,'err');AUTO=a.autopilot;AUTO_HIDDEN=null;renderAuto();say('autopilot started');return poll();}
-  const r=await api('run',{name:P.name,engine:$('engSel').value||undefined});
+  const sw=askSwap($('engSel').value);if(sw===null)return say('run not started','warn');
+  const r=await api('run',{name:P.name,engine:$('engSel').value||undefined,swap_engine:sw});
   if(!r.ok)return say(r.error,'err');if(!r.started)return say(r.message,'warn');say(`run started: ${r.total} card(s)`);poll();};
 $('cancelBtn').onclick=()=>api('cancel');
 async function poll(){clearTimeout(POLL);const r=await api('status');const s=r.status||{};
@@ -472,7 +477,8 @@ function renderScores(list){list=(list||[]).slice().sort((a,b)=>(b.final-a.final
 $('scTable').addEventListener('click',ev=>{const tr=ev.target.closest('tr[data-k]');if(!tr)return;SC_SEL=tr.dataset.k;renderScores(SC_T.scores);});
 $('scGrid').addEventListener('click',ev=>{if(ev.target.tagName==='IMG')window.open(ev.target.src,'_blank');});
 $('scGo').onclick=async()=>{askNotify();const files=[...$('scFiles').querySelectorAll('input:checked')].map(x=>x.value);if(!files.length)return $('scTxt').textContent='pick at least one LoRA file';
-  $('scGo').disabled=true;const r=await api('lora_score',{name:P.name,job:SC_T.job,files,engine:$('scEng').value,weight:+$('scW').value||1,seed:+$('scSeed').value,baseline:$('scBase').checked,switch_model:$('scSwitch').checked,prompts:$('scPrompts').value});
+  const sw=askSwap($('scEng').value);if(sw===null)return;
+  $('scGo').disabled=true;const r=await api('lora_score',{name:P.name,job:SC_T.job,files,engine:$('scEng').value,swap_engine:sw,weight:+$('scW').value||1,seed:+$('scSeed').value,baseline:$('scBase').checked,switch_model:$('scSwitch').checked,prompts:$('scPrompts').value});
   if(!r.ok){$('scGo').disabled=false;$('scTxt').textContent=r.error;return;}pollScore();};
 $('scCancel').onclick=()=>api('lora_score_cancel');
 $('scBest').onclick=async()=>{const eng=$('scEng').value;if(!confirm(`Keep only the best scored save of ${SC_T.job} in ${eng}? The other copies Dataset Studio made there are removed (ai-toolkit keeps every save).`))return;
@@ -607,7 +613,7 @@ $('cards').addEventListener('click',async ev=>{const cl=ev.target.closest('a[dat
   if(!b)return;const i=+b.dataset.i;let r;
   if(b.dataset.act==='reject')r=await api('card_update',{name:P.name,index:i,status:'rejected'});
   else if(b.dataset.act==='restore')r=await api('card_update',{name:P.name,index:i,status:'done'});
-  else if(b.dataset.act==='reroll'){r=await api('run',{name:P.name,only:[i],force:true,engine:$('engSel').value||undefined});if(r.ok&&r.started){say('re-rolling card '+i);poll();}}
+  else if(b.dataset.act==='reroll'){const sw=askSwap($('engSel').value);if(sw===null)return;r=await api('run',{name:P.name,only:[i],force:true,engine:$('engSel').value||undefined,swap_engine:sw});if(r.ok&&r.started){say('re-rolling card '+i);poll();}}
   if(r&&!r.ok)say(r.error,'err');if(b.dataset.act!=='reroll'){await openProject(P.name);}});
 $('cards').addEventListener('change',async ev=>{const t=ev.target;
   JUST_LOT=null;
