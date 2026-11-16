@@ -687,6 +687,34 @@ class Studio:
             if acc.get("ok") is False:
                 raise PermissionError(acc["error"])
 
+    def _dataset_engine_check(self, items):
+        """Before anything starts: a project that still has cards to render needs a
+        dataset engine that can EDIT (every card is an edit of the reference). A
+        text-to-image app (crispz-ideogram, crispz-krea2) would fail each project after
+        the engine swap (A/B queue of 2026-11-16). Unknown engines pass: the run asks
+        them when they answer."""
+        bad = []
+        for name, o in items:
+            p = ds_project.load(name)
+            todo = ds_project.cards_to_render(p)
+            if not todo:
+                continue
+            try:
+                e = self.engines.get(o.get("engine"))
+            except KeyError:
+                continue
+            if e.can_edit() is False:
+                bad.append(f"'{name}' ({len(todo)} card(s) to render, engine '{e.name}')")
+        if bad:
+            ok = [n for n in self.engines.edit_capable()]
+            raise ValueError(
+                "these projects still have cards to render with an engine that cannot edit "
+                "the reference photo (text to image only): " + ", ".join(bad) + ". Render the "
+                "dataset with " + (", ".join(ok) if ok else "klein, flux3 or qwen-edit")
+                + ", or, for an A/B of LoRAs, clone a finished project with 'keep the "
+                "renders': the clones then have nothing to render and only the training "
+                "preset and the scoring engine change.")
+
     def op_autopilot_queue(self, data):
         names = [str(n) for n in (data.get("names") or []) if str(n).strip()]
         if not names:
@@ -694,6 +722,7 @@ class Studio:
         self._autopilot_guard()
         items = [(ds_project.load(n)["name"], self._autopilot_opts(ds_project.load(n)))
                  for n in names]
+        self._dataset_engine_check(items)
         self._gate_check([o for _, o in items])
         st = ds_autopilot.autopilot().start_queue(self, items)
         log(f"autopilot: queue of {len(items)} project(s) started")
@@ -703,6 +732,7 @@ class Studio:
         p = self._project(data)
         self._autopilot_guard()
         opts = self._autopilot_opts(p, data.get("engine"))
+        self._dataset_engine_check([(p["name"], opts)])
         self._gate_check([opts])
         st = ds_autopilot.autopilot().start(self, p["name"], opts, queue=[], history=[])
         log(f"autopilot: '{p['name']}' started ({opts['preset']}, {opts['steps']} steps, "

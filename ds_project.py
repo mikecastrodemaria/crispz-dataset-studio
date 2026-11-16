@@ -548,7 +548,10 @@ class Runner:
             caps = engine.caps() or {}
             sup = caps.get("supports") or {}
             if not sup.get("edit", True):
-                raise RuntimeError(f"{caps.get('tool')} does not support the edit op")
+                raise RuntimeError(f"{caps.get('tool')} does not support the edit op: it is text "
+                                   f"to image only and cannot render dataset cards. Render "
+                                   f"with an engine that edits (klein, flux3, qwen-edit), or "
+                                   f"clone a finished project with 'keep the renders'")
             if not sup.get("faces", True):
                 self._say("WARNING: this engine has no face service (insightface "
                           "missing?): likeness scores will all be 0")
