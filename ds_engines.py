@@ -70,6 +70,48 @@ KNOWN_BASES = {
 }
 LOG_DIR = os.path.join(HERE, "logs")
 
+# Can the engine render the dataset? Every card is an EDIT of the reference photo (op
+# edit), and some family apps are text to image only: their cz_protocol has
+# OMNI_SUPPORTED = False (crispz-ideogram, crispz-krea2, read 2026-11-16). An A/B queue
+# on 2026-11-16 put 'krea2' then 'ideogram' as the DATASET engine of clones that still
+# had cards to render: each project died at "does not support the edit op" after the
+# engine swap. The queue now checks before it starts. What an engine said the last time
+# it answered is remembered here (a stopped engine cannot be asked); before it has ever
+# answered, its app folder decides.
+NO_EDIT_APPS = {"crispz-ideogram", "crispz-krea2"}
+EDIT_APPS = {"crispz-klein", "crispz-flux3", "crispz-qwen-edit"}
+CAPS_SEEN = os.path.join(LOG_DIR, "engine_caps.json")
+_SEEN_LOCK = threading.Lock()
+
+
+def _seen_load():
+    try:
+        with open(CAPS_SEEN, encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _seen_save(name, caps):
+    sup = (caps or {}).get("supports") or {}
+    entry = {"tool": caps.get("tool"), "edit": bool(sup.get("edit")),
+             "seen": time.strftime("%Y-%m-%d %H:%M:%S")}
+    with _SEEN_LOCK:
+        d = _seen_load()
+        old = d.get(name) or {}
+        if old.get("tool") == entry["tool"] and old.get("edit") == entry["edit"]:
+            return
+        d[name] = entry
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            tmp = CAPS_SEEN + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(d, fh, indent=1)
+            os.replace(tmp, CAPS_SEEN)
+        except OSError:
+            pass
+
 _LOG_HOOK = None
 
 
@@ -227,7 +269,29 @@ class Engine:
         if time.time() - ts > max_age:
             caps = probe(self.url, timeout=timeout)
             self._probe = (time.time(), caps)
+            if caps:
+                _seen_save(self.name, caps)
         return caps
+
+    def app_name(self):
+        return os.path.basename(os.path.normpath(self.dir)) if self.dir else ""
+
+    def can_edit(self):
+        """True / False / None (unknown): can this engine render cards (op edit)?
+        Asked live when it answers, else what it said the last time, else its app
+        folder (NO_EDIT_APPS / EDIT_APPS). Never launches anything."""
+        caps = self.caps()
+        if caps:
+            return bool((caps.get("supports") or {}).get("edit"))
+        seen = _seen_load().get(self.name)
+        if isinstance(seen, dict) and "edit" in seen:
+            return bool(seen["edit"])
+        app = self.app_name()
+        if app in NO_EDIT_APPS:
+            return False
+        if app in EDIT_APPS:
+            return True
+        return None
 
     def forget(self):
         self._probe = (0.0, None)
@@ -439,6 +503,19 @@ class Engines:
             raise KeyError(f"unknown engine '{name}' (configured: "
                            f"{', '.join(self.by_name) or 'none'})")
         return e
+
+    def edit_capable(self):
+        """Names of the configured engines known to render cards, without probing
+        the stopped ones (what they said last, else their app folder)."""
+        out = []
+        seen = _seen_load()
+        for n, e in self.by_name.items():
+            ok = (seen.get(n) or {}).get("edit") if isinstance(seen.get(n), dict) else None
+            if ok is None:
+                ok = True if e.app_name() in EDIT_APPS else None
+            if ok:
+                out.append(n)
+        return out
 
     def alive_child(self):
         """The engine we started that is still running, if any (one at a time)."""
