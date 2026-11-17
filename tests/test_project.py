@@ -224,9 +224,10 @@ def test_full_run_rerolls_and_resume(projects, engines):
     assert [t["seed"] for t in p["cards"][1]["tries"]] == [1000, 1001, 1002]
 
 
-def test_reference_size_and_fast_mode_reach_the_engine(projects, engines):
+def test_reference_size_and_fast_mode_reach_the_engine(projects, engines, monkeypatch):
     """size_mode 'reference' sends no width/height (the engine keeps the input's own
-    size); 'fast' goes out as spec.fast; both are absent from the spec otherwise."""
+    size); 'fast' goes out as spec.fast to qwen-edit; both are absent otherwise."""
+    monkeypatch.setattr(fake_engine, "TOOL", "crispz-qwen-edit")
     p = ds_project.create("sz", engine="fake")
     ds_project.update_settings(p, {"prompts": ["same person, close-up"], "max_rerolls": 0,
                                    "width": 96, "height": 64, "size_mode": "reference",
@@ -282,6 +283,38 @@ def test_copy_check_flags_the_reference_handed_back(projects, engines, tmp_path)
     assert c["status"] == "done" and len(c["tries"]) == 2
     assert all(t["flags"] for t in c["tries"]) and c["tries"][0]["detail"]["copy_sim"] > 0.9
     assert any(w.startswith("kept try is flagged") for w in c["warnings"])
+
+
+def test_fast_mode_is_not_sent_to_an_engine_without_speed_modes(projects, engines):
+    """2026-11-17: a clone of a qwen-edit project kept Fast = Lightning 8; MiniMax
+    refused every card. Only qwen-edit gets a speed mode; the others run without it,
+    said once in the log."""
+    p = ds_project.create("nofast", engine="fake")
+    ds_project.update_settings(p, {"prompts": ["same person, a", "same person, b"],
+                                   "max_rerolls": 0, "width": 64, "height": 64,
+                                   "fast": "lightning-8"})
+    ds_project.set_reference(ds_project.load("nofast"), png_bytes(), engine=None)
+    runner = ds_project.RUNNER
+    assert runner.start("nofast", engines, {}, force=False)["ok"] and runner.wait(60)
+    d = ds_project.project_dir("nofast")
+    spec = json.load(open(os.path.join(d, "cards", "last_spec.json")))
+    assert "fast" not in spec
+    assert ds_project.load("nofast")["settings"]["fast"] == "lightning-8"   # kept
+    said = [l for l in runner.state["log"] if "speed mode" in l]
+    assert len(said) == 1 and "ignored" in said[0]
+    assert [c["status"] for c in ds_project.load("nofast")["cards"]] == ["done", "done"]
+
+
+def test_a_run_stops_after_the_same_engine_error_three_times(projects, engines):
+    p = ds_project.create("ferr", engine="fake")
+    ds_project.update_settings(p, {"prompts": ["FAIL a", "FAIL b", "FAIL c", "FAIL d", "e"],
+                                   "max_rerolls": 0, "width": 64, "height": 64})
+    ds_project.set_reference(ds_project.load("ferr"), png_bytes(), engine=None)
+    runner = ds_project.RUNNER
+    assert runner.start("ferr", engines, {}, force=False)["ok"] and runner.wait(60)
+    assert runner.state["ok"] is False and "3 cards in a row" in runner.state["error"]
+    st = [c["status"] for c in ds_project.load("ferr")["cards"]]
+    assert st == ["failed", "failed", "failed", "pending", "pending"]
 
 
 def test_a_run_stops_after_tries_in_a_row_copied_back(projects, engines, tmp_path):

@@ -82,6 +82,14 @@ def lot_dir(name, output_dir=None, date_subfolders=True, now=None):
     lot = _unique_dir(os.path.join(parent, f"{safe_name(name)}_{time.strftime('%Y%m%d-%H%M%S', t)}"))
     return lot, os.path.relpath(lot, root).replace(os.sep, "/")
 
+# The engines with edit speed modes (spec.fast: Lightning LoRA, model profile). The
+# other family apps inherited the protocol field but refuse any mode but 'off'
+# (2026-11-17: MiniMax, "unknown edit speed: 'Lightning 8 steps'", on every card of a
+# clone of a qwen-edit project). The setting is kept on the project, only not sent.
+FAST_TOOLS = {"crispz-qwen-edit"}
+# Cards in a row failing with the same engine error that stop a run.
+FAIL_STOP = 3
+
 DEFAULT_SETTINGS = {
     "promptset": "character-25", "prompts": [], "width": 1024, "height": 1024,
     "steps": None, "threshold": 35, "max_rerolls": 2, "caption_source": "prompt",
@@ -575,6 +583,9 @@ class Runner:
             s = p["settings"]
             self._copy_streak = 0
             self._copy_stop = None
+            self._fail_streak = []
+            self._tool = str(caps.get("tool") or "")
+            self._fast_said = False
             for n, card in enumerate(todo, start=1):
                 if self.cancel_flag:
                     self._say(f"cancelled after {n - 1} card(s)")
@@ -585,6 +596,16 @@ class Runner:
                 self.state["done"] = n
                 if self._copy_stop:
                     raise RuntimeError(self._copy_stop)
+                # The same engine error card after card: stop instead of walking the
+                # whole set (2026-11-17: a clone of a qwen-edit project kept its Lightning
+                # speed mode, MiniMax refused all 25 cards with the same KeyError).
+                if card.get("status") == "failed":
+                    self._fail_streak.append(card.get("error") or "")
+                else:
+                    self._fail_streak = []
+                if len(self._fail_streak) >= FAIL_STOP and len(set(self._fail_streak[-FAIL_STOP:])) == 1:
+                    raise RuntimeError(f"stopped: {FAIL_STOP} cards in a row failed with the same "
+                                       f"engine error: {self._fail_streak[-1]}")
             self.state["ok"] = not self.cancel_flag
         except Exception as e:
             self.state["ok"] = False
@@ -638,7 +659,14 @@ class Runner:
             if s.get("size_mode") != "reference":
                 spec["width"], spec["height"] = int(s["width"]), int(s["height"])
             if s.get("fast"):
-                spec["fast"] = s["fast"]
+                if s["fast"] == "off" or getattr(self, "_tool", "") in FAST_TOOLS:
+                    spec["fast"] = s["fast"]
+                elif not getattr(self, "_fast_said", False):
+                    self._fast_said = True
+                    self._say(f"speed mode '{s['fast']}' ignored: only "
+                              f"{', '.join(sorted(FAST_TOOLS))} has edit speed modes "
+                              f"(this engine is {getattr(self, '_tool', '') or 'unknown'}); "
+                              f"set Fast to 'engine setting' in the project to silence this")
             if (s.get("model") or "").strip():
                 spec["model"] = s["model"].strip()
             if s.get("steps"):
