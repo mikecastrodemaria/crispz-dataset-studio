@@ -665,11 +665,20 @@ class Studio:
     def op_lora_score_cancel(self, data):
         return {"cancelled": ds_lorascore.SCORER.cancel()}
 
-    def _autopilot_opts(self, p, engine=None):
+    def _autopilot_opts(self, p, engine=None, to_lora=True):
+        """to_lora False = the dataset step only (the queue follows each project's
+        'Run goes all the way to the LoRA', 2026-11-20). The training checkpoint is
+        checked here, before a card is rendered."""
         s = p.get("settings") or {}
         if not p.get("reference"):
             raise ValueError(f"'{p['name']}': set a reference photo first")
-        return {"engine": engine or p.get("engine") or None,
+        if to_lora:
+            try:
+                ds_aitoolkit.checkpoint_for(s.get("auto_preset") or "klein4b",
+                                            s.get("sdxl_checkpoint"))
+            except (ValueError, FileNotFoundError) as e:
+                raise type(e)(f"'{p['name']}': {e}")
+        return {"engine": engine or p.get("engine") or None, "to_lora": bool(to_lora),
                 "preset": s.get("auto_preset") or "klein4b",
                 "steps": int(s.get("auto_steps") or 1500),
                 "score": bool(s.get("auto_score", True)),
@@ -733,10 +742,13 @@ class Studio:
         if not names:
             raise ValueError("pick at least one project")
         self._autopilot_guard()
-        items = [(ds_project.load(n)["name"], self._autopilot_opts(ds_project.load(n)))
-                 for n in names]
+        items = []
+        for n in names:
+            p = ds_project.load(n)
+            items.append((p["name"], self._autopilot_opts(
+                p, to_lora=bool((p.get("settings") or {}).get("autopilot")))))
         self._dataset_engine_check(items)
-        self._gate_check([o for _, o in items])
+        self._gate_check([o for _, o in items if o["to_lora"]])
         st = ds_autopilot.autopilot().start_queue(self, items)
         log(f"autopilot: queue of {len(items)} project(s) started")
         return {"autopilot": st}
