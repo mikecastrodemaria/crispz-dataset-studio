@@ -144,7 +144,7 @@ small{color:var(--mut)}
 </aside>
 <section class="grid">
   <div class="box" id="doneBar"><b id="doneTxt">Dataset complete</b><span style="flex:1"></span>
-    <button id="doneSimilar" title="Find kept cards too close to each other (same composition): a LoRA learns the repetition">Check similar</button><button id="doneExport">Export ZIP</button><button id="doneAitk" class="primary">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><button id="doneLora">Copy LoRA</button><button id="doneScore">Score LoRA</button><small id="doneHint"></small></div>
+    <button id="doneSimilar" title="Find kept cards too close to each other (same composition): a LoRA learns the repetition">Check similar</button><button id="doneExport">Export ZIP</button><button id="doneSend" class="primary" title="The rest of the chain on this finished dataset: export, AI-Toolkit job, training, LoRA score, with the project's LoRA settings (Train on, steps, checkpoint, score engine)">Send to training</button><button id="doneAitk">Create AI-Toolkit job</button><button id="doneTrain">Launch training</button><button id="doneLora">Copy LoRA</button><button id="doneScore">Score LoRA</button><small id="doneHint"></small></div>
   <div class="box" id="autoBar"><div class="row" style="margin:0"><b id="autoTxt"></b><span style="flex:1"></span><button id="autoLog">Log</button><button id="autoResume" class="primary" title="Go on from the step the restart cut, with the rest of the queue">Resume</button><button id="autoCancel" class="danger">Cancel</button><button id="autoCancelAll" class="danger">Cancel all</button><button id="autoHide">Hide</button></div>
     <div id="autoSteps2"></div><small id="autoSub"></small><div id="autoHist"></div><pre id="autoTail" style="display:none"></pre></div>
   <div class="box" id="trainBar"><div class="row" style="margin:0"><b id="trainTxt"></b><span style="flex:1"></span><button id="trainLog">Log</button><button id="trainLora" class="primary">Copy LoRA</button><button id="trainScore">Score LoRA</button><button id="trainStop" class="danger">Stop training</button><button id="trainHide">Hide</button></div>
@@ -430,7 +430,7 @@ function datasetComplete(){if(!P||!P.cards.length)return false;const done=P.card
   return done>0&&!P.cards.some(c=>['pending','failed','rendering'].includes(c.status));}
 function renderDoneBar(){const ok=datasetComplete()&&!lastRunning;$('doneBar').style.display=ok?'flex':'none';if(!ok)return;
   const done=P.cards.filter(c=>c.status==='done').length;$('doneTxt').textContent=`Dataset complete: ${done} card(s) kept`;
-  const ready=AITK&&AITK.root;$('doneAitk').style.display=ready?'':'none';
+  const ready=AITK&&AITK.root;$('doneAitk').style.display=ready?'':'none';$('doneSend').style.display=ready&&!TRAIN.running&&!(AUTO&&AUTO.running)?'':'none';
   $('doneTrain').style.display=ready&&P.last_aitk&&!TRAIN.running?'':'none';$('doneLora').style.display=ready&&P.last_aitk&&!TRAIN.running?'':'none';$('doneScore').style.display=$('doneLora').style.display;$('doneLora').textContent=loraLabel();$('doneTrain').title=P.last_aitk?'train job '+P.last_aitk.job:'';
   $('doneHint').textContent=ready?(P.last_aitk?`last job: ${P.last_aitk.job}`:''):(AITK&&AITK.error?AITK.error:'set the AI-Toolkit folder in Settings to create the training job from here');}
 async function refreshAitk(){const r=await api('aitk_status');AITK=r.ok?r.aitk:null;if(P)fillAutoPresets(P.settings.auto_preset);renderDoneBar();}
@@ -443,6 +443,12 @@ function openAitk(){if(!P||!AITK||!AITK.root)return;const s=$('aitkPreset');s.in
   $('aitkUseLot').checked=!!JUST_LOT;$('aitkUseLot').disabled=!JUST_LOT;$('aitkLot').textContent=JUST_LOT||'none in this session';
   $('aitkOut').style.display='none';$('aitkMsg').textContent='';$('aitkGo').disabled=false;$('aitkDlg').showModal();}
 $('doneAitk').onclick=openAitk;
+// Send to training (2026-11-20): the autopilot from this finished dataset, by hand,
+// whatever 'Run goes all the way to the LoRA' says; nothing is rendered again.
+$('doneSend').onclick=async()=>{if(!P)return;const s=P.settings||{};const pr=AITK&&AITK.presets?AITK.presets.find(x=>x.name===(s.auto_preset||AITK.default_preset)):null;
+  const eng=s.auto_score===false?'no score':(s.auto_score_engine||'auto');
+  if(!confirm(`Send "${P.name}" to training?\n\nModel: ${pr?pr.label:s.auto_preset}\nSteps: ${s.auto_steps||1500}`+(s.sdxl_checkpoint?`\nCheckpoint: ${s.sdxl_checkpoint}`:'')+`\nScore on: ${eng}\n\nExport, AI-Toolkit job, training, then the LoRA score. The cards are not rendered again.`))return;
+  askNotify();const a=await api('autopilot_start',{name:P.name});if(!a.ok)return say(a.error,'err');AUTO=a.autopilot;AUTO_HIDDEN=null;renderAuto();renderDoneBar();say('sent to training');poll();};
 // ---------- training ----------
 async function launchTrain(job){if(!P)return;askNotify();say('starting the training...');
   let r=await api('aitk_train',{name:P.name,job});
