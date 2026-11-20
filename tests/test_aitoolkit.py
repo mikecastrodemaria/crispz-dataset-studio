@@ -10,7 +10,7 @@ from PIL import Image
 
 import ds_project
 import ds_aitoolkit
-from test_server import studio, post, data_url  # noqa: F401  (fixture reuse)
+from test_server import studio, post, get, data_url  # noqa: F401  (fixture reuse)
 
 
 def fake_aitk(base):
@@ -1028,3 +1028,25 @@ def test_queue_follows_each_projects_to_the_lora_box(studio, tmp_path, monkeypat
     assert all(h["data"]["steps"][k] == "skipped" for k in ("export", "job", "training", "score"))
     assert not ds_project.load("data").get("last_aitk")
     assert h["full"]["ok"] is True and h["full"]["steps"]["score"] == "done"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake interpreter is a symlink")
+def test_send_to_training_on_a_finished_dataset_renders_nothing(studio, tmp_path, monkeypatch):  # noqa: F811
+    """The 'Send to training' button (2026-11-20) starts the autopilot on a finished
+    dataset whatever its 'to the LoRA' box: no card rendered again, chain to the score."""
+    _auto_setup(studio, tmp_path, monkeypatch)
+    _new_auto_project(studio, "ready", ["one", "two", "three", "four", "five"])
+    post(studio, "project_settings", {"name": "ready", "settings": {"autopilot": False}})
+    assert post(studio, "run", {"name": "ready"})["ok"]
+    for _ in range(600):
+        if not post(studio, "status")["status"].get("running"):
+            break
+        time.sleep(0.05)
+    edits = fake_engine.STATE["edits"]
+    r = post(studio, "autopilot_start", {"name": "ready"})
+    assert r["ok"], r
+    st = _wait_auto()
+    assert st["ok"] is True and st["steps"]["score"] == "done", st.get("log")
+    assert fake_engine.STATE["edits"] == edits                     # nothing re-rendered
+    _, _, body = get(studio, "/")
+    assert b'id="doneSend"' in body
