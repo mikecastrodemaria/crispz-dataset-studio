@@ -134,7 +134,7 @@ small{color:var(--mut)}
   <div class="box"><h2>Autopilot</h2>
     <div class="row"><label style="min-width:0"><input type="checkbox" id="autoChk"> Run goes all the way to the LoRA</label></div>
     <div class="row"><label>Train on</label><select id="autoPreset" style="flex:1"><option value="klein4b">FLUX.2 Klein 4B</option><option value="klein9b">FLUX.2 Klein 9B (gated)</option></select></div>
-    <div class="row" id="sdxlRow" style="display:none"><label>Checkpoint</label><input type="text" id="sdxlCkpt" placeholder="D:\models\illustrious.safetensors (empty = SDXL base)" style="flex:1"></div>
+    <div class="row" id="sdxlRow" style="display:none"><label title="Train the LoRA on your own .safetensors (a CivitAI fine-tune...) instead of the official model; empty = the official model">Checkpoint</label><input type="text" id="sdxlCkpt" placeholder="" style="flex:1"></div>
     <div class="row"><label>Steps</label><input type="number" id="autoSteps" min="50" max="100000" step="50"></div>
     <div class="row"><label>Score on</label><select id="autoEng" style="flex:1"></select></div>
     <div class="row"><label></label><label style="min-width:0"><input type="checkbox" id="autoBest"> keep only the best save in that engine</label></div>
@@ -184,7 +184,7 @@ small{color:var(--mut)}
   <p><small>Copies the dataset into <span id="aitkDs"></span> and writes the training config in its config folder. Everything stays on this PC; nothing starts on its own.</small></p>
   <div class="row"><label>Model</label><select id="aitkPreset" style="flex:1"></select></div>
   <div class="row"><label></label><small id="aitkNote"></small></div>
-  <div class="row" id="aitkCkptRow" style="display:none"><label>Checkpoint</label><input type="text" id="aitkCkpt" placeholder="the Illustrious / Pony .safetensors (empty = SDXL base)" style="flex:1"></div>
+  <div class="row" id="aitkCkptRow" style="display:none"><label>Checkpoint</label><input type="text" id="aitkCkpt" placeholder="" style="flex:1"></div>
   <div class="row"><label>Steps</label><input type="number" id="aitkSteps" min="50" max="100000" step="50"></div>
   <div class="row"><label>Dataset</label><label style="min-width:0"><input type="checkbox" id="aitkUseLot"> use the export just made (<span id="aitkLot"></span>)</label></div>
   <div class="row"><label></label><small>Unchecked: a fresh export is made first, with the captions as they are now.</small></div>
@@ -320,7 +320,7 @@ function fill(){const s=P.settings;fillRef();
   showModel(s.model||'');$('subject').value=s.subject||'';$('fast').value=s.fast||'';$('copyChk').checked=s.copy_check!==false;$('copyStop').value=s.copy_stop??3;$('artChk').checked=!!s.artifact_check;$('steps').value=s.steps??'';$('guidance').value=s.guidance??'';$('threshold').value=s.threshold;$('rerolls').value=s.max_rerolls;
   $('detail').value=s.detail_faces===null||s.detail_faces===undefined?'':(s.detail_faces?'1':'0');
   $('capsrc').value=s.caption_source;$('trigger').value=s.trigger_word||'';$('expsize').value=String(s.export_size);$('expfmt').value=s.export_format;
-  $('autoChk').checked=!!s.autopilot;fillAutoPresets(s.auto_preset);$('sdxlCkpt').value=s.sdxl_checkpoint||'';$('tagPrefix').value=s.tag_prefix||'';$('tagPrefixRow').style.display=s.caption_source==='tags'?'':'none';$('autoSteps').value=s.auto_steps||1500;$('autoBest').checked=s.auto_keep_best!==false;fillAutoEng(s.auto_score===false?'':(s.auto_score_engine??'auto'));runLabel();}
+  $('autoChk').checked=!!s.autopilot;$('sdxlCkpt').value=s.sdxl_checkpoint||'';fillAutoPresets(s.auto_preset);$('tagPrefix').value=s.tag_prefix||'';$('tagPrefixRow').style.display=s.caption_source==='tags'?'':'none';$('autoSteps').value=s.auto_steps||1500;$('autoBest').checked=s.auto_keep_best!==false;fillAutoEng(s.auto_score===false?'':(s.auto_score_engine??'auto'));runLabel();}
 $('psSel').onchange=async()=>{if(!P)return;const r=await api('project_settings',{name:P.name,settings:{promptset:$('psSel').value}});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();};
 async function saveSettings(){if(!P)return;const d=$('detail').value;
   const settings={prompts:$('prompts').value,model:$('model').value,subject:$('subject').value,width:+$('w').value,height:+$('h').value,size_mode:$('sizeSel').value==='reference'?'reference':'fixed',fast:$('fast').value,copy_check:$('copyChk').checked,copy_stop:$('copyStop').value===''?3:+$('copyStop').value,artifact_check:$('artChk').checked,steps:$('steps').value||null,guidance:$('guidance').value||null,
@@ -376,14 +376,16 @@ function runLabel(){$('runBtn').textContent=$('autoChk').checked?'Run + LoRA':'R
 // autopilot does it on its own). true = stop it, false = nothing to stop, null = cancel.
 function askSwap(name){const o=ENGINES.find(e=>e.running&&e.started_by_us&&e.name!==name);if(!o)return false;
   return confirm(`The engine '${o.name}' started by Dataset Studio holds the GPU. Stop it and start '${name||'the default engine'}'?`)?true:null;}
+function ckptFor(name,row,input){const p=AITK&&AITK.presets?AITK.presets.find(x=>x.name===name):null;const ok=!!(p&&p.checkpoint);
+  $(row).style.display=ok||$(input).value?'':'none';$(input).placeholder=ok?(p.checkpoint_hint||'')+(name==='sdxl'?'':' (empty = the official model)'):'this model cannot train on a checkpoint file';}
 function presetLabel(p){return p.label+(p.tested?'':' (not tested)');}
 function fillAutoPresets(cur){const s=$('autoPreset');if(!AITK||!AITK.presets)return;s.innerHTML='';
   AITK.presets.forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=presetLabel(p);o.title=p.note;s.appendChild(o);});
-  s.value=cur&&AITK.presets.some(p=>p.name===cur)?cur:AITK.default_preset;$('sdxlRow').style.display=s.value==='sdxl'?'':'none';}
+  s.value=cur&&AITK.presets.some(p=>p.name===cur)?cur:AITK.default_preset;ckptFor(s.value,'sdxlRow','sdxlCkpt');}
 function fillAutoEng(cur){const s=$('autoEng');s.innerHTML='<option value="">no score</option><option value="auto">auto (the crispz of the model)</option>';ENGINES.forEach(e=>{const o=document.createElement('option');o.value=e.name;o.textContent=e.name;s.appendChild(o);});
   if(cur&&![...s.options].some(o=>o.value===cur)){const o=document.createElement('option');o.value=cur;o.textContent=cur+' (not configured)';s.appendChild(o);}s.value=cur||'';}
 $('autoChk').addEventListener('change',runLabel);
-$('autoPreset').addEventListener('change',()=>{$('sdxlRow').style.display=$('autoPreset').value==='sdxl'?'':'none';});
+$('autoPreset').addEventListener('change',()=>ckptFor($('autoPreset').value,'sdxlRow','sdxlCkpt'));
 $('capsrc').addEventListener('change',()=>{$('tagPrefixRow').style.display=$('capsrc').value==='tags'?'':'none';});
 // ---------- re-caption ----------
 let RECAP_WAS=false;
@@ -436,7 +438,7 @@ function openAitk(){if(!P||!AITK||!AITK.root)return;const s=$('aitkPreset');s.in
   AITK.presets.forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=presetLabel(p);o.dataset.note=p.note;s.appendChild(o);});
   s.value=(P.settings.auto_preset&&AITK.presets.some(p=>p.name===P.settings.auto_preset))?P.settings.auto_preset:AITK.default_preset;
   $('aitkCkpt').value=P.settings.sdxl_checkpoint||'';
-  s.onchange=()=>{$('aitkNote').textContent=s.selectedOptions[0].dataset.note;$('aitkCkptRow').style.display=s.value==='sdxl'?'':'none';};s.onchange();
+  s.onchange=()=>{$('aitkNote').textContent=s.selectedOptions[0].dataset.note;ckptFor(s.value,'aitkCkptRow','aitkCkpt');};s.onchange();
   $('aitkSteps').value=AITK.default_steps;$('aitkDs').textContent=AITK.datasets_dir;
   $('aitkUseLot').checked=!!JUST_LOT;$('aitkUseLot').disabled=!JUST_LOT;$('aitkLot').textContent=JUST_LOT||'none in this session';
   $('aitkOut').style.display='none';$('aitkMsg').textContent='';$('aitkGo').disabled=false;$('aitkDlg').showModal();}
@@ -523,7 +525,7 @@ $('autoResume').onclick=async()=>{askNotify();$('autoResume').disabled=true;cons
 $('autoHide').onclick=()=>{AUTO_HIDDEN=(AUTO.project||'')+':'+(AUTO.started||'');renderAuto();};
 $('autoLog').onclick=()=>{const t=$('autoTail');t.style.display=t.style.display==='none'?'':'none';t.scrollTop=1e9;};
 $('queueBtn').onclick=async()=>{const r=await api('projects');const l=$('queueList');
-  l.innerHTML=(r.projects||[]).map(p=>`<div class="row"><label style="min-width:0"><input type="checkbox" value="${esc(p.name)}" ${p.has_reference?'':'disabled'}> ${esc(p.name)}</label><small>${p.done}/${p.cards} card(s)${p.has_reference?'':', no reference photo'}</small></div>`).join('')||'<small>no project</small>';
+  l.innerHTML=(r.projects||[]).map(p=>`<div class="row"><label style="min-width:0"><input type="checkbox" value="${esc(p.name)}" ${p.has_reference?'':'disabled'}> ${esc(p.name)}</label><small>${p.done}/${p.cards} card(s)${p.has_reference?'':', no reference photo'}, ${p.autopilot?'to the LoRA'+(p.auto_preset?' ('+esc(p.auto_preset)+')':''):'<b>dataset only</b>'}</small></div>`).join('')||'<small>no project</small>';
   $('queueMsg').textContent=AITK&&AITK.root?'':'set the AI-Toolkit folder in Settings first';$('queueDlg').showModal();};
 $('queueGo').onclick=async()=>{askNotify();const names=[...$('queueList').querySelectorAll('input:checked')].map(x=>x.value);if(!names.length)return $('queueMsg').textContent='tick at least one project';
   const r=await api('autopilot_queue',{names});if(!r.ok){$('queueMsg').textContent=r.error;return;}$('queueDlg').close();AUTO=r.autopilot;AUTO_HIDDEN=null;renderAuto();say(`autopilot queue: ${names.length} project(s)`);poll();};
@@ -539,7 +541,7 @@ function renderTrain(){const t=TRAIN||{};const show=t.active&&(t.running||TRAIN_
   if(!t.running&&t.lora)bits.push('LoRA: '+t.lora);if(!t.running&&!t.lora)bits.push('log: '+t.log);if(t.running&&!t.hf_token)bits.push('no HF token found (a gated base fails)');
   $('trainSub').textContent=bits.join(' · ');$('trainTail').textContent=(t.tail||[]).join('\n');}$('doneExport').onclick=()=>$('exportBtn').click();
 $('aitkGo').onclick=async()=>{$('aitkGo').disabled=true;$('aitkMsg').textContent='';say('creating the AI-Toolkit job...');
-  const r=await api('aitk_create',{name:P.name,preset:$('aitkPreset').value,steps:+$('aitkSteps').value,lot:$('aitkUseLot').checked?JUST_LOT:undefined,checkpoint:$('aitkPreset').value==='sdxl'?$('aitkCkpt').value:undefined});
+  const r=await api('aitk_create',{name:P.name,preset:$('aitkPreset').value,steps:+$('aitkSteps').value,lot:$('aitkUseLot').checked?JUST_LOT:undefined,checkpoint:$('aitkCkpt').value});
   $('aitkGo').disabled=false;if(!r.ok){$('aitkMsg').textContent=r.error;return say(r.error,'err');}
   $('aitkJob').textContent=r.job;$('aitkDir').textContent=r.dataset_dir;$('aitkCfg').textContent=r.config_path;$('aitkCmd').value=r.command;
   $('aitkWarn').innerHTML=(r.warnings||[]).map(w=>`<div class="warn">${esc(w)}</div>`).join('');$('aitkOut').style.display='';$('aitkGo').disabled=true;

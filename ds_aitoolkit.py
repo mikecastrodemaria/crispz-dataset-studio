@@ -179,6 +179,54 @@ PRESETS = {
                               "from undoing it; made for 2K and more (export at 2048); about "
                               "38 GB to download; nvfp4 text encoder (Blackwell)"},
 }
+# Training on the user's own checkpoint (2026-11-20, read in ai-toolkit of 2026-11-18):
+# how each arch takes it. "name_or_path": the file replaces the model (the text
+# encoder, VAE and configs still come from the official repo, given as
+# extras_name_or_path); "dit_path": MiniMax-H3 reads its DiT from model_kwargs.dit_path.
+# Klein and Krea 2 read the file raw (no ComfyUI import): bf16 / fp16 only.
+# Ideogram 4 loads from its HF repo or a diffusers folder only.
+CKPT_MODE = {"klein4b": "name_or_path", "klein9b": "name_or_path", "flux3": "name_or_path",
+             "zimage_turbo": "name_or_path", "qwen_image": "name_or_path",
+             "krea": "name_or_path", "krea2_turbo": "name_or_path", "sdxl": "name_or_path",
+             "moss": "name_or_path", "moss_base": "name_or_path",
+             "minimax_image": "dit_path"}
+CKPT_RAW_ONLY = {"klein4b", "klein9b", "krea2_turbo"}
+CKPT_HINT = {
+    "klein4b": "a FLUX.2 Klein 4B .safetensors in the original BFL layout, bf16",
+    "klein9b": "a FLUX.2 Klein 9B .safetensors in the original BFL layout, bf16",
+    "flux3": "a FLUX.3 Klein DiT .safetensors (bf16, or ComfyUI int8 / fp8)",
+    "zimage_turbo": "a Z-Image .safetensors (bf16, or ComfyUI fp8 / int8)",
+    "qwen_image": "a Qwen-Image .safetensors",
+    "krea": "a FLUX.1 .safetensors",
+    "krea2_turbo": "a Krea 2 .safetensors, bf16",
+    "sdxl": "an Illustrious or Pony .safetensors (empty = SDXL base)",
+    "moss": "a MOSS-Image DiT .safetensors (bf16 or ComfyUI int8 ConvRot, CivitAI)",
+    "moss_base": "a MOSS-Image DiT .safetensors (bf16 or ComfyUI int8 ConvRot, CivitAI)",
+    "minimax_image": "a MiniMax-H3-Image DiT .safetensors (bf16 or ComfyUI int8)",
+}
+
+
+def _quantized_file(path):
+    """The quantization a .safetensors carries (from its header only), else None."""
+    import json, struct
+    try:
+        with open(path, "rb") as fh:
+            n = struct.unpack("<Q", fh.read(8))[0]
+            if n > 200 * 1024 * 1024:
+                return None
+            head = json.loads(fh.read(n).decode("utf-8"))
+    except (OSError, ValueError, struct.error):
+        return None
+    dtypes = {v.get("dtype") for k, v in head.items() if isinstance(v, dict)}
+    if any(k.endswith(".comfy_quant") or k == "scaled_fp8" or k.endswith(".weight_scale")
+           for k in head):
+        return "ComfyUI quantized"
+    for d in ("F8_E4M3", "F8_E5M2", "I8", "U8"):
+        if d in dtypes:
+            return d
+    return None
+
+
 DEFAULT_PRESET = "klein4b"
 DEFAULT_STEPS = 1500
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
@@ -228,6 +276,7 @@ def status(cfg):
     root = find_root(raw) if raw else None
     out = {"configured": bool(str(raw).strip()), "setting": raw, "root": root,
            "presets": [{"name": k, "label": v["label"], "note": v["note"],
+                        "checkpoint": k in CKPT_MODE, "checkpoint_hint": CKPT_HINT.get(k, ""),
                         "tested": bool(v.get("tested")), "engine": v.get("engine"),
                         "score_engine": engine_for_preset(k, (cfg or {}).get("engines"))}
                        for k, v in PRESETS.items()],
@@ -280,9 +329,10 @@ def preset_of_job(root, job):
     hit = next((k for k, v in PRESETS.items() if v["name_or_path"] == repo), None)
     if hit:
         return hit
-    # a preset on the user's own checkpoint (SDXL): found by its architecture
+    # a job on the user's own checkpoint: found by its architecture (the first preset of
+    # that arch; MOSS SFT and Base share theirs)
     arch = job_arch(root, job)
-    return next((k for k, v in PRESETS.items() if v.get("checkpoint") and v["arch"] == arch), None)
+    return next((k for k, v in PRESETS.items() if k in CKPT_MODE and v["arch"] == arch), None)
 
 
 def datasets_dir(root, cfg=None):
@@ -338,7 +388,13 @@ def _yaml_kv(key, value, indent):
 
 def build_config(job, dataset_path, preset, steps, trigger, sample_prompts, resolutions,
                  name_or_path=None):
+    """name_or_path = the user's checkpoint (None = the preset's model): it goes where
+    the arch reads it (CKPT_MODE), the official repo staying the source of the rest."""
     pr = PRESETS[preset]
+    ckpt = name_or_path if name_or_path and name_or_path != pr["name_or_path"] else None
+    model_kw = {k: v for k, v in pr.get("model", {}).items()}
+    if ckpt and CKPT_MODE.get(preset) == "dit_path":
+        model_kw["model_kwargs"] = dict(model_kw.get("model_kwargs") or {}, dit_path=_path(ckpt))
     tr = dict({"noise_scheduler": "flowmatch", "timestep_type": "sigmoid"}, **pr.get("train", {}))
     sm = dict(_SAMPLE, **pr.get("sample", {}))
     lines = [
@@ -391,10 +447,12 @@ def build_config(job, dataset_path, preset, steps, trigger, sample_prompts, reso
         "        lr: 1e-4",
         "        dtype: \"bf16\"",
         "      model:",
-        f"        name_or_path: {_q(_path(name_or_path or pr['name_or_path']))}",
+        f"        name_or_path: {_q(_path(ckpt if ckpt and CKPT_MODE.get(preset) == 'name_or_path' else pr['name_or_path']))}",
         f"        arch: {_q(pr['arch'])}",
     ]
-    for k, v in pr.get("model", {}).items():
+    if ckpt and CKPT_MODE.get(preset) == "name_or_path" and preset != "sdxl":
+        lines.append(f"        extras_name_or_path: {_q(pr['name_or_path'])}")
+    for k, v in model_kw.items():
         lines += _yaml_kv(k, v, 8)
     lines += [
         "      sample:",
@@ -432,16 +490,27 @@ def _sample_prompts(captions, trigger, n=4):
 
 
 def checkpoint_for(preset, checkpoint):
-    """The model a preset trains on: the user's checkpoint for the presets that take
-    one (a local .safetensors must exist, a HF repo id is passed as is)."""
+    """The checkpoint a preset trains on: None (the official model) or the user's file
+    / HF repo, checked: a local file must exist, a preset that cannot take one refuses
+    by name, Klein and Krea 2 refuse a quantized file (read raw by ai-toolkit)."""
     pr = PRESETS[preset]
     c = str(checkpoint or "").strip().strip('"')
-    if not pr.get("checkpoint") or not c:
-        return pr["name_or_path"]
+    if not c:
+        return None
+    if preset not in CKPT_MODE:
+        raise ValueError(f"{pr['label']}: ai-toolkit loads it from its Hugging Face repo or "
+                         f"a diffusers folder only, not from a checkpoint file; empty the "
+                         f"Checkpoint field")
     local = c.lower().endswith((".safetensors", ".ckpt")) or "\\" in c or c[1:3] == ":/" \
         or c.startswith(("/", "."))
-    if local and not os.path.isfile(os.path.expanduser(c)):
-        raise FileNotFoundError(f"checkpoint not found: {c}")
+    if local:
+        if not os.path.isfile(os.path.expanduser(c)):
+            raise FileNotFoundError(f"checkpoint not found: {c}")
+        q = _quantized_file(os.path.expanduser(c)) if preset in CKPT_RAW_ONLY else None
+        if q:
+            raise ValueError(f"{pr['label']}: the checkpoint is {q}, and ai-toolkit reads "
+                             f"this model's file as is (no ComfyUI import): give the bf16 "
+                             f"version of it")
     return c
 
 
@@ -458,7 +527,8 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None, c
     steps = int(steps or DEFAULT_STEPS)
     if not 50 <= steps <= 100000:
         raise ValueError("steps must be between 50 and 100000")
-    model_path = checkpoint_for(preset, checkpoint)
+    ckpt = checkpoint_for(preset, checkpoint)
+    model_path = ckpt or PRESETS[preset]["name_or_path"]
     if not lot_dir or not os.path.isdir(lot_dir):
         raise FileNotFoundError(f"export folder not found: {lot_dir}")
     images = sorted(f for f in os.listdir(lot_dir) if f.lower().endswith(IMAGE_EXTS))
@@ -515,8 +585,12 @@ def create_job(project, lot_dir, cfg, preset=None, steps=None, base_name=None, c
         command = f'cd /d "{root}" && set PYTHONUTF8=1 && "{py}" run.py config/{job}.yaml'
     else:
         command = f'cd "{root}" && PYTHONUTF8=1 "{py}" run.py config/{job}.yaml'
+    if ckpt:
+        warnings.append(f"trained on the checkpoint {os.path.basename(ckpt)}: score it on the "
+                        f"same checkpoint (the engine's Model menu) or the LoRA is judged on "
+                        f"another model")
     if PRESETS[preset].get("checkpoint"):
-        if model_path == PRESETS[preset]["name_or_path"]:
+        if not ckpt:
             warnings.append("no checkpoint given: trained on SDXL base; for Illustrious or "
                             "Pony give their .safetensors (a base LoRA holds badly on them)")
         if (s.get("caption_source") or "prompt") != "tags":

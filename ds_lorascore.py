@@ -221,6 +221,25 @@ class Scorer:
             if switch:
                 # every render, base included: the comparison is on the same model
                 spec0["model"], spec0["switch_model"] = switch, True
+            else:
+                # trained on the user's checkpoint (2026-11-20): scored on the same
+                # file when the engine has it in its checkpoints folder, else said
+                ck = str((p.get("settings") or {}).get("sdxl_checkpoint") or "").strip().strip('"')
+                base = os.path.basename(ck.replace("\\", "/")) if ck else ""
+                try:
+                    with open(os.path.join(root, "config", job + ".yaml"), encoding="utf-8") as fh:
+                        trained_on = base and base in fh.read()
+                except OSError:
+                    trained_on = False
+                if trained_on and base.lower().endswith((".safetensors", ".gguf", ".ckpt")):
+                    models = [m for m in (caps.get("models") or []) if isinstance(m, str)]
+                    if any(os.path.basename(m.replace("\\", "/")) == base for m in models):
+                        spec0["model"] = next(m for m in models
+                                              if os.path.basename(m.replace("\\", "/")) == base)
+                        self._say(f"scored on the training checkpoint {base}")
+                    else:
+                        self._say(f"WARNING: trained on {base}, which is not in {engine.name}'s "
+                                  f"checkpoints folder: scored on the engine's own model")
             base_rows = None
             if baseline:
                 base_rows = []

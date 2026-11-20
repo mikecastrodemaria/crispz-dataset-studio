@@ -286,7 +286,9 @@ def list_projects():
                             "engine": p.get("engine"),
                             "has_reference": bool(p.get("reference")),
                             "cards": len(cards),
-                            "done": sum(1 for c in cards if c.get("status") == "done")})
+                            "done": sum(1 for c in cards if c.get("status") == "done"),
+                            "autopilot": bool((p.get("settings") or {}).get("autopilot")),
+                            "auto_preset": (p.get("settings") or {}).get("auto_preset") or ""})
     return out
 
 

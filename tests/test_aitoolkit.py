@@ -692,7 +692,8 @@ def test_autopilot_refuses_a_9b_queue_without_access(studio, tmp_path, monkeypat
     cfg["ai_toolkit_dir"] = str(root)
     post(studio, "config_set", {"config": cfg})
     post(studio, "project_new", {"name": "nine"})
-    post(studio, "project_settings", {"name": "nine", "settings": {"auto_preset": "klein9b"}})
+    post(studio, "project_settings", {"name": "nine", "settings": {"auto_preset": "klein9b",
+                                                                   "autopilot": True}})
     post(studio, "set_reference", {"name": "nine", "data": data_url()})
     r = post(studio, "autopilot_queue", {"names": ["nine"]})
     assert not r["ok"] and "FLUX.2-klein-base-9B" in r["error"]
@@ -792,8 +793,9 @@ def test_sdxl_checkpoint_job_and_engine_lookup(tmp_path):
     assert ds_aitoolkit.checkpoint_for("sdxl", "someone/pony-xl") == "someone/pony-xl"
     with pytest.raises(FileNotFoundError):
         ds_aitoolkit.checkpoint_for("sdxl", str(tmp_path / "missing.safetensors"))
-    # klein ignores a checkpoint; an untested preset says so
-    assert ds_aitoolkit.checkpoint_for("klein4b", str(ck)).endswith("klein-base-4B")
+    # a checkpoint for every preset ai-toolkit can load one for (2026-11-20)
+    assert ds_aitoolkit.checkpoint_for("klein4b", str(ck)) == str(ck)
+    assert ds_aitoolkit.checkpoint_for("klein4b", "") is None
     r = ds_aitoolkit.create_job(p, str(lot), cfg, preset="qwen_image")
     assert any("not tested" in w for w in r["warnings"])
     assert ds_aitoolkit.preset_of_job(str(root), r["job"]) == "qwen_image"
@@ -956,3 +958,73 @@ def test_minimax_score_renders_at_2k(studio, tmp_path, monkeypatch):  # noqa: F8
     assert post(studio, "lora_score", {"name": "m", "prompts": "close-up"})["ok"]
     assert _wait_score()["ok"]
     assert {(sp["width"], sp["height"]) for sp in fake_engine.STATE["gens"]} == {(1536, 2048)}
+
+
+def _st_file(path, tensors):
+    """A safetensors file with only a header (enough for the dtype check)."""
+    import json as _j, struct as _s
+    head, off = {}, 0
+    for k, (dt, n) in tensors.items():
+        head[k] = {"dtype": dt, "shape": [n], "data_offsets": [off, off + n]}
+        off += n
+    h = _j.dumps(head).encode()
+    path.write_bytes(_s.pack("<Q", len(h)) + h + b"\0" * off)
+    return str(path)
+
+
+def test_training_on_a_checkpoint_per_arch(tmp_path):
+    """2026-11-20, from ai-toolkit's loaders: the file goes in name_or_path (official
+    repo kept as extras), in model_kwargs.dit_path for MiniMax; Ideogram 4 refuses;
+    Klein and Krea 2 refuse a quantized file (read raw), MOSS takes one."""
+    bf16 = _st_file(tmp_path / "jib_bf16.safetensors", {"layers.0.w": ("BF16", 4)})
+    q8 = _st_file(tmp_path / "jib_int8.safetensors", {"layers.0.w": ("I8", 4),
+                                                      "layers.0.w.comfy_quant": ("U8", 2)})
+    mo = ds_aitoolkit.build_config("j", "/d", "moss", 100, None, ["a"], [1024], name_or_path=q8)
+    assert f'name_or_path: "{q8}"' in mo
+    assert 'extras_name_or_path: "OpenMOSS-Team/MOSS-Image-SFT"' in mo
+    mm = ds_aitoolkit.build_config("j", "/d", "minimax_image", 100, None, ["a"], [1024],
+                                   name_or_path=bf16)
+    assert 'name_or_path: "Comfy-Org/MiniMax-H3-Image"' in mm and f'dit_path: "{bf16}"' in mm
+    plain = ds_aitoolkit.build_config("j", "/d", "moss", 100, None, ["a"], [1024])
+    assert "extras_name_or_path" not in plain and "dit_path" not in plain
+    assert ds_aitoolkit.checkpoint_for("moss_base", q8) == q8
+    assert ds_aitoolkit.checkpoint_for("flux3", q8) == q8
+    for preset in ("klein4b", "krea2_turbo"):
+        assert ds_aitoolkit.checkpoint_for(preset, bf16) == bf16
+        with pytest.raises(ValueError) as ei:
+            ds_aitoolkit.checkpoint_for(preset, q8)
+        assert "bf16" in str(ei.value)
+    with pytest.raises(ValueError) as ei:
+        ds_aitoolkit.checkpoint_for("ideogram4", bf16)
+    assert "diffusers folder" in str(ei.value)
+    root = fake_aitk(tmp_path / "tk")
+    lot = make_lot(tmp_path / "lot", trigger="tok")
+    p = {"name": "jib", "settings": {"trigger_word": "tok", "export_size": 1024}}
+    r = ds_aitoolkit.create_job(p, str(lot), {"ai_toolkit_dir": str(root)}, preset="moss",
+                                checkpoint=q8)
+    assert r["model"] == q8 and any("score it on the same checkpoint" in w for w in r["warnings"])
+    assert ds_aitoolkit.preset_of_job(str(root), r["job"]) == "moss"
+    st = ds_aitoolkit.status({"ai_toolkit_dir": str(root)})
+    by = {x["name"]: x for x in st["presets"]}
+    assert by["moss"]["checkpoint"] and not by["ideogram4"]["checkpoint"]
+    assert "ConvRot" in by["moss"]["checkpoint_hint"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the fake interpreter is a symlink")
+def test_queue_follows_each_projects_to_the_lora_box(studio, tmp_path, monkeypatch):  # noqa: F811
+    """2026-11-20: the queue ran the whole chain whatever the project's 'Run goes all
+    the way to the LoRA'. A project with the box off now gets its dataset only."""
+    _auto_setup(studio, tmp_path, monkeypatch)
+    _new_auto_project(studio, "full", ["one", "two", "three", "four", "five"])
+    _new_auto_project(studio, "data", ["one", "two", "three", "four", "five"])
+    post(studio, "project_settings", {"name": "data", "settings": {"autopilot": False}})
+    listed = {p["name"]: p for p in post(studio, "projects")["projects"]}
+    assert listed["full"]["autopilot"] is True and listed["data"]["autopilot"] is False
+    r = post(studio, "autopilot_queue", {"names": ["data", "full"]})
+    assert r["ok"], r
+    st = _wait_auto()
+    h = {x["project"]: x for x in st["history"]}
+    assert h["data"]["ok"] is True and h["data"]["steps"]["dataset"] == "done"
+    assert all(h["data"]["steps"][k] == "skipped" for k in ("export", "job", "training", "score"))
+    assert not ds_project.load("data").get("last_aitk")
+    assert h["full"]["ok"] is True and h["full"]["steps"]["score"] == "done"

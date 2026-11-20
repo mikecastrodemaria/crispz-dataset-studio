@@ -233,16 +233,24 @@ class Autopilot:
     def _run(self, studio, name, resume_at):
         try:
             o = self.state["opts"]
-            order = list(STEPS)
+            order = list(STEPS) if o.get("to_lora", True) else ["dataset"]
             start = order.index(resume_at) if resume_at in order else 0
             for step in order[start:]:
                 self._check()
                 getattr(self, "_do_" + step)(studio, name, o)
             self.state["ok"] = True
-            r = self.state.get("result") or {}
-            self._say("finished: " + (f"LoRA {r.get('lora')}" if r.get("lora") else "LoRA trained")
-                      + (f", likeness {r['mean_lora']} with it, {r['mean_base']} without"
-                         if r.get("mean_lora") is not None else ""))
+            if not o.get("to_lora", True):
+                # the project's 'Run goes all the way to the LoRA' is off: in a queue
+                # its dataset is rendered and the chain stops there (2026-11-20)
+                for k in STEPS[1:]:
+                    self.state["steps"][k] = "skipped"
+                self._say("finished: dataset only (the project's 'Run goes all the way to "
+                          "the LoRA' is off)")
+            else:
+                r = self.state.get("result") or {}
+                self._say("finished: " + (f"LoRA {r.get('lora')}" if r.get("lora") else "LoRA trained")
+                          + (f", likeness {r['mean_lora']} with it, {r['mean_base']} without"
+                             if r.get("mean_lora") is not None else ""))
         except Cancelled:
             self.state["ok"] = False
             self.state["error"] = "cancelled"
