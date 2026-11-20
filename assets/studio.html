@@ -69,12 +69,17 @@ small{color:var(--mut)}
 .sc-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-top:8px}.sc-g figure{margin:0;background:#05080d;border-radius:6px;overflow:hidden;position:relative}.sc-g img{width:100%;aspect-ratio:832/1216;object-fit:cover;display:block}.sc-g figcaption{font-size:11px;padding:3px 6px;color:var(--mut)}
 #trainBar pre{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--mut);max-height:160px;overflow:auto;white-space:pre-wrap;margin:6px 0 0}
 .cmd{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:11px}
+.loading{display:flex;align-items:center;gap:10px;color:var(--mut);padding:24px 4px}
+.spin{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:2.4s}}
 </style></head><body>
 <header>
   <h1>crispz Dataset Studio</h1>
   <select id="projSel" title="Project"></select>
   <button id="newProj">New project</button>
   <button id="cloneProj" title="Copy this project under a new name">Clone</button>
+  <button id="delProj" class="danger" title="Delete this project's folder (exports, ai-toolkit jobs and copied LoRAs are kept)">Delete</button>
   <button id="queueBtn" title="Autopilot on several projects, one after the other">Queue</button>
   <span id="engineDot"><span class="dot"></span><span id="engineTxt">engine</span></span>
   <button id="engineBtn">Launch engine</button>
@@ -296,6 +301,9 @@ async function openProject(name){if(!P||P.name!==name)SIMILAR={};const r=await a
 $('newProj').onclick=async()=>{const name=prompt('Project name (letters, digits, - _ .)');if(!name)return;
   const r=await api('project_new',{name,engine:$('engSel').value||undefined});if(!r.ok)return say(r.error,'err');await loadProjects(r.project.name);};
 $('projSel').onchange=()=>{JUST_LOT=null;openProject($('projSel').value);};
+$('delProj').onclick=async()=>{if(!P)return say('no project to delete','err');const n=P.name;
+  if(!confirm(`Delete the project "${n}"?\n\nIts folder goes: reference, cards, every try, settings. Exports, ai-toolkit jobs and LoRAs copied into the engines are kept. This cannot be undone.`))return;
+  const r=await api('project_delete',{name:n});if(!r.ok)return say(r.error,'err');P=null;JUST_LOT=null;await loadProjects();say(`project ${n} deleted`);};
 $('cloneProj').onclick=()=>{if(!P)return say('no project to clone','err');$('cloneName').value=P.name+'-copy';$('cloneRenders').checked=true;$('cloneMsg').textContent='';$('cloneDlg').showModal();$('cloneName').select();};
 $('cloneGo').onclick=async()=>{const r=await api('project_clone',{name:P.name,new_name:$('cloneName').value.trim(),with_renders:$('cloneRenders').checked});
   if(!r.ok){$('cloneMsg').textContent=r.error;return;}$('cloneDlg').close();JUST_LOT=null;await loadProjects(r.project.name);say(`cloned to ${r.project.name}`);};
@@ -653,9 +661,12 @@ $('setSave').onclick=async()=>{const engines={};const errs=[];$('engList').query
   const r=await api('config_set',{config:cfg});if(!r.ok){$('setMsg').textContent=r.error;return;}$('settings').close();refreshEngines();await refreshAitk();say(AITK&&AITK.error?AITK.error:'settings saved',AITK&&AITK.error?'warn':'');};
 
 // ---------- boot ----------
-(async()=>{const ps=await api('promptsets');(ps.promptsets||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.count})`;$('psSel').appendChild(o);});
+function showLoading(t){$('cards').innerHTML=`<div class="loading"><span class="spin"></span>${esc(t)}</div>`;}
+(async()=>{showLoading('Loading projects and engines...');const s0=$('projSel');s0.innerHTML='<option>loading...</option>';s0.disabled=true;
+  const ps=await api('promptsets');(ps.promptsets||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.count})`;$('psSel').appendChild(o);});
   // ?project=<name>: open that project (tools/send_to_studio.py, the IrfanView key)
   let want=null;try{want=new URLSearchParams(location.search).get('project');}catch(e){}
-  await refreshEngines();await refreshAitk();await loadProjects(want||undefined);poll();setInterval(refreshEngines,15000);})();
+  try{await refreshEngines();await refreshAitk();}catch(e){}
+  s0.disabled=false;await loadProjects(want||undefined);poll();setInterval(refreshEngines,15000);})();
 </script>
 </body></html>

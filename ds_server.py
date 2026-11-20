@@ -440,6 +440,19 @@ class Studio:
                                with_renders=bool(data.get("with_renders", True)))
         return {"project": new}
 
+    def op_project_delete(self, data):
+        p = self._project(data)
+        name = p["name"]
+        if self.runner.state["running"] and self.runner.state["project"] == name:
+            raise RuntimeError(f"'{name}' is rendering: cancel the run first")
+        if ds_lorascore.SCORER.state.get("running") and ds_lorascore.SCORER.state.get("project") == name:
+            raise RuntimeError(f"'{name}' is being scored: cancel the scoring first")
+        ap = ds_autopilot.autopilot().status()
+        queued = [q[0] if isinstance(q, (list, tuple)) else q for q in ap.get("queue") or []]
+        if (ap.get("running") and ap.get("project") == name) or name in queued:
+            raise RuntimeError(f"'{name}' is in the autopilot or its queue: cancel it first")
+        return {"deleted": ds_project.delete(name)}
+
     def op_aitk_status(self, data):
         return {"aitk": ds_aitoolkit.status(self.config)}
 

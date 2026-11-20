@@ -165,3 +165,30 @@ def test_a_dropped_connection_is_one_log_line(monkeypatch):
     h.wfile = W()
     h._send(200, b"{}")
     assert len(lines) == 1 and "POST /api/engine_launch" in lines[0] and "closed" in lines[0]
+
+
+def test_delete_project_removes_its_folder_only(studio, tmp_path):
+    """The Delete button (2026-11-17): the project's folder goes, refused while a run
+    or the autopilot holds it; an unknown name or a path outside projects/ is refused."""
+    assert post(studio, "project_new", {"name": "gone"})["ok"]
+    assert post(studio, "project_new", {"name": "stays"})["ok"]
+    d = ds_project.project_dir("gone")
+    assert os.path.isdir(d)
+    ds_server.STUDIO.runner.state.update({"running": True, "project": "gone"})
+    try:
+        r = post(studio, "project_delete", {"name": "gone"})
+        assert not r["ok"] and "rendering" in r["error"] and os.path.isdir(d)
+    finally:
+        ds_server.STUDIO.runner.state.update({"running": False, "project": None})
+    r = post(studio, "project_delete", {"name": "gone"})
+    assert r["ok"] and r["deleted"] == "gone" and not os.path.exists(d)
+    assert [p["name"] for p in post(studio, "projects")["projects"]] == ["stays"]
+    assert not post(studio, "project_delete", {"name": "gone"})["ok"]
+    assert not post(studio, "project_delete", {"name": "../projects"})["ok"]
+    assert os.path.isdir(ds_project.project_dir("stays"))
+
+
+def test_the_page_has_the_delete_button_and_the_loading_spinner(studio):
+    _, _, body = get(studio, "/")
+    assert b'id="delProj"' in body and b"project_delete" in body
+    assert b"@keyframes spin" in body and b"showLoading(" in body

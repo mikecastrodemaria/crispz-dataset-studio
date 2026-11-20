@@ -255,6 +255,22 @@ def project_dir(name):
     return os.path.join(PROJECTS_DIR, safe_name(name))
 
 
+def delete(name):
+    """Removes the project's folder (cards, tries, reference, settings), nothing else:
+    exports in the output folder, ai-toolkit jobs and the LoRAs copied into engines
+    stay where they are."""
+    d = project_dir(name)
+    root = os.path.abspath(PROJECTS_DIR)
+    if os.path.dirname(os.path.abspath(d)) != root or not os.path.isfile(
+            os.path.join(d, "project.json")):
+        raise FileNotFoundError(f"no project named '{name}'")
+    with _LOCK:
+        shutil.rmtree(d)
+    _log(f"deleted project '{os.path.basename(d)}' (its folder; exports, ai-toolkit jobs "
+         f"and copied LoRAs are kept)")
+    return os.path.basename(d)
+
+
 def list_projects():
     out = []
     if os.path.isdir(PROJECTS_DIR):
