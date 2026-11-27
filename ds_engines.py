@@ -115,6 +115,24 @@ def _seen_save(name, caps):
 _LOG_HOOK = None
 
 
+# A proxy set on the PC (HTTP_PROXY / HTTPS_PROXY, a VPN) must never carry the
+# requests to this machine itself: Gradio checks its own http://127.0.0.1:<port> at
+# boot and, through a proxy, quits with "When localhost is not accessible, a
+# shareable link must be created" (crispz-minimax, 2026-11-27); our own probes of the
+# engines go to 127.0.0.1 too. Both the children and this process get localhost in
+# NO_PROXY, kept with whatever was there.
+_LOCAL = ("localhost", "127.0.0.1", "::1")
+
+
+def _no_proxy(env):
+    have = [h.strip() for h in (env.get("NO_PROXY") or env.get("no_proxy") or "").split(",")
+            if h.strip()]
+    return ",".join(have + [h for h in _LOCAL if h not in have])
+
+
+os.environ["NO_PROXY"] = os.environ["no_proxy"] = _no_proxy(os.environ)
+
+
 def set_log_hook(fn):
     """The server installs its logger here (one place prints to the console)."""
     global _LOG_HOOK
@@ -347,40 +365,55 @@ class Engine:
             py, label = resolve_python(self.dir, self.python)
             if not py:
                 return {"ok": False, "error": f"engine '{self.name}': {label}"}
-            if self.started_by_us():
-                return {"ok": False, "error": f"engine '{self.name}' was started by us "
-                        f"(pid {self.proc.pid}) but does not answer yet at {self.url}; "
-                        f"see {self.log_path}"}
-            os.makedirs(LOG_DIR, exist_ok=True)
-            env = dict(os.environ)
-            env["GRADIO_SERVER_PORT"] = str(_port_of(self.url))
-            env["GRADIO_SERVER_NAME"] = "127.0.0.1"
-            env.setdefault("PYTHONUTF8", "1")
-            # The family apps print their boot log on stdout; it goes to the file.
-            logf = open(self.log_path, "ab")
-            logf.write(f"\n=== launched by crispz-dataset-studio {time.strftime('%Y-%m-%d %H:%M:%S')}"
-                       f" :: {' '.join(py)} app.py (port {env['GRADIO_SERVER_PORT']})\n".encode())
-            flags = 0
-            if os.name == "nt":
-                flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | \
-                        getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            try:
-                self.proc = subprocess.Popen(py + ["app.py"], cwd=self.dir, env=env,
-                                             stdout=logf, stderr=subprocess.STDOUT,
-                                             stdin=subprocess.DEVNULL, creationflags=flags)
-            except OSError as e:
-                logf.close()
-                return {"ok": False, "error": f"engine '{self.name}': cannot start: {e}"}
-            try:
-                with open(self.pid_path, "w", encoding="utf-8") as fh:
-                    fh.write(str(self.proc.pid))
-            except OSError:
-                pass
-            _log(f"{self.name}: started pid {self.proc.pid} with {label}, port "
-                 f"{env['GRADIO_SERVER_PORT']}, log {self.log_path}")
+            booting = self.started_by_us()
+            if not booting:
+                self._spawn(py, label)
+        if booting:
+            # Our child is still booting (a run asked for it seconds after the Launch
+            # button, 2026-11-27: "started by us but does not answer yet" after 16 s on
+            # MiniMax): wait for it like a fresh launch instead of failing.
+            _log(f"{self.name}: pid {self.pid()} is still starting, waiting for it")
+            if not wait:
+                return {"ok": True, "started": True, "pid": self.pid()}
+            return self.wait_ready()
+        if self.proc is None:
+            return self._spawn_error
         if not wait:
             return {"ok": True, "started": True, "pid": self.proc.pid}
         return self.wait_ready()
+
+    def _spawn(self, py, label):
+        self._spawn_error = None
+        os.makedirs(LOG_DIR, exist_ok=True)
+        env = dict(os.environ)
+        env["GRADIO_SERVER_PORT"] = str(_port_of(self.url))
+        env["GRADIO_SERVER_NAME"] = "127.0.0.1"
+        env["NO_PROXY"] = env["no_proxy"] = _no_proxy(env)
+        env.setdefault("PYTHONUTF8", "1")
+        # The family apps print their boot log on stdout; it goes to the file.
+        logf = open(self.log_path, "ab")
+        logf.write(f"\n=== launched by crispz-dataset-studio {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                   f" :: {' '.join(py)} app.py (port {env['GRADIO_SERVER_PORT']})\n".encode())
+        flags = 0
+        if os.name == "nt":
+            flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | \
+                    getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            self.proc = subprocess.Popen(py + ["app.py"], cwd=self.dir, env=env,
+                                         stdout=logf, stderr=subprocess.STDOUT,
+                                         stdin=subprocess.DEVNULL, creationflags=flags)
+        except OSError as e:
+            logf.close()
+            self.proc = None
+            self._spawn_error = {"ok": False, "error": f"engine '{self.name}': cannot start: {e}"}
+            return
+        try:
+            with open(self.pid_path, "w", encoding="utf-8") as fh:
+                fh.write(str(self.proc.pid))
+        except OSError:
+            pass
+        _log(f"{self.name}: started pid {self.proc.pid} with {label}, port "
+             f"{env['GRADIO_SERVER_PORT']}, log {self.log_path}")
 
     def wait_ready(self, timeout=None):
         """Polls cli_caps until the app answers, or the child dies, or the timeout."""

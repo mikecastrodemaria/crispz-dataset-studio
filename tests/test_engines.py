@@ -127,6 +127,29 @@ def test_launch_starts_the_app_waits_for_caps_and_stops_it():
     assert ds_engines.probe(e.url, timeout=1) is None
 
 
+def test_a_child_still_booting_is_waited_for_and_gets_localhost_in_no_proxy(monkeypatch):
+    """2026-11-27: a run asked for minimax 16 s after it was launched and failed at
+    once ('started by us but does not answer yet'); the boot is now waited for. And
+    the child gets localhost in NO_PROXY: Gradio quits at boot when its own
+    http://127.0.0.1 check goes through a proxy."""
+    monkeypatch.setenv("FAKE_BOOT_DELAY", "2")
+    monkeypatch.setenv("NO_PROXY", "corp.example")
+    port = free_port()
+    e = ds_engines.Engine("slowapp", {"url": f"http://127.0.0.1:{port}",
+                                      "dir": os.path.join(HERE, "fake_app_dir"),
+                                      "python": sys.executable, "boot_timeout": 30})
+    try:
+        r = e.launch(wait=False)
+        assert r["ok"] and r["started"] and ds_engines.probe(e.url, timeout=1) is None
+        r = e.launch(wait=True)                  # still booting: waited for, not refused
+        assert r["ok"] and r["caps"]["tool"] == "fake-klein", r
+        with open(e.log_path, encoding="utf-8", errors="replace") as fh:
+            txt = fh.read()
+        assert "NO_PROXY=corp.example,localhost,127.0.0.1" in txt
+    finally:
+        e.stop()
+
+
 def test_registry_ensure_refuses_a_second_child():
     p1, p2 = free_port(), free_port()
     cfg = {"engine": "a", "engines": {

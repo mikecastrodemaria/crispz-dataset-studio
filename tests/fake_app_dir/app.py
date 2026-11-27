@@ -5,5 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import fake_engine
 if __name__ == "__main__":
     port = int(os.environ.get("GRADIO_SERVER_PORT") or 7899)
-    print(f"fake app booting on {port}", flush=True)
+    print(f"fake app booting on {port}, NO_PROXY={os.environ.get('NO_PROXY', '')}", flush=True)
+    import time
+    time.sleep(float(os.environ.get("FAKE_BOOT_DELAY") or 0))
     fake_engine.serve(port).serve_forever()
