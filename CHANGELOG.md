@@ -34,15 +34,20 @@ From a finished dataset to a trained, scored LoRA, hands off.
 - The edit speed mode (Lightning) goes to qwen-edit only.
 - An engine still booting is waited for; localhost is always in NO_PROXY (Gradio quit
   at boot behind a proxy).
+- After a first Ollama timeout, the rest of the run goes without it (captions from the
+  prompt line, no artifact check), said once, with a reminder to Re-caption.
 
 ### Projects and review
+- Home screen: the list of projects as tiles (thumbnail, progress, stage, engine, LoRA
+  model, best LoRA score, what is running), grouped by LoRA model or by a group of
+  yours, by engine or by stage; search, stage filter, sort; Hide / Show; drawn in
+  batches as the page scrolls. A click opens the project screen.
 - Clone a project (with or without its renders), Delete a project.
 - Review tools: cards too close to each other, Info, Compare; send a photo from
   IrfanView.
 
 ### Interface
 - Settings: the dialog scrolls; nameless engines and shared ports are refused.
-- A loading spinner at start.
 - Terminal: a start banner (engines, ai-toolkit, projects) and coloured log lines.
 
 ## 0.1.0 (2026-10-29)
