@@ -451,3 +451,30 @@ def test_export_pairs_resized_and_skips_rejected(projects, engines):
         assert z.read("003.txt").decode().strip() == "custom caption"
         img = Image.open(io.BytesIO(z.read("001.jpg")))
         assert max(img.size) == 32 and img.size == (32, 16)
+
+
+def test_ollama_is_skipped_for_the_rest_of_the_run_after_a_timeout(projects, engines, monkeypatch):
+    """2026-11-28: a 31B vision model next to the engine timed out on every card
+    (180 s each). After the first timeout the run goes on without Ollama, says so
+    once, and reminds Re-caption at the end."""
+    calls = []
+
+    def slow(path, cfg, timeout=180, prompt=None):
+        calls.append(path)
+        return {"ok": False, "error": "Ollama: TimeoutError: timed out"}
+    monkeypatch.setattr(ds_captions, "describe", slow)
+    p = ds_project.create("olla", engine="fake")
+    ds_project.update_settings(p, {"prompts": ["same person, a", "same person, b",
+                                               "same person, c"],
+                                   "max_rerolls": 0, "width": 64, "height": 64,
+                                   "caption_source": "ollama", "trigger_word": "tok"})
+    ds_project.set_reference(ds_project.load("olla"), png_bytes(), engine=None)
+    runner = ds_project.RUNNER
+    assert runner.start("olla", engines, {}, force=False)["ok"] and runner.wait(60)
+    assert len(calls) == 1                                   # only the first card waited
+    cards = ds_project.load("olla")["cards"]
+    assert all(c["status"] == "done" for c in cards)
+    assert all(c["caption"].startswith("tok, ") for c in cards)
+    log = runner.state["log"]
+    assert sum("Ollama timed out" in l for l in log) == 1
+    assert any("Re-caption" in l and "reminder" in l for l in log)
