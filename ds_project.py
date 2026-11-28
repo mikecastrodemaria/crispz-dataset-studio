@@ -282,14 +282,49 @@ def list_projects():
                 except Exception:
                     continue
                 cards = p.get("cards") or []
-                out.append({"name": d, "created": p.get("created"),
+                done = sum(1 for c in cards if c.get("status") == "done")
+                failed = sum(1 for c in cards if c.get("status") == "failed")
+                scores = [h for h in p.get("lora_scores") or [] if h.get("mean_lora") is not None]
+                best = max(scores, key=lambda h: h["mean_lora"]) if scores else None
+                if not p.get("reference"):
+                    stage = "new"
+                elif best:
+                    stage = "scored"
+                elif p.get("last_aitk"):
+                    stage = "trained"
+                elif cards and done == len(cards):
+                    stage = "dataset"
+                else:
+                    stage = "rendering"
+                try:
+                    updated = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(pj)))
+                except OSError:
+                    updated = p.get("created") or ""
+                out.append({"name": d, "created": p.get("created"), "updated": updated,
                             "engine": p.get("engine"),
                             "has_reference": bool(p.get("reference")),
-                            "cards": len(cards),
-                            "done": sum(1 for c in cards if c.get("status") == "done"),
+                            "reference": p.get("reference") or "",
+                            "cards": len(cards), "done": done, "failed": failed,
+                            "stage": stage, "hidden": bool(p.get("hidden")),
+                            "group": p.get("group") or "",
+                            "job": (p.get("last_aitk") or {}).get("job") or "",
+                            "lora_score": best["mean_lora"] if best else None,
+                            "base_score": best.get("mean_base") if best else None,
                             "autopilot": bool((p.get("settings") or {}).get("autopilot")),
                             "auto_preset": (p.get("settings") or {}).get("auto_preset") or ""})
     return out
+
+
+def set_meta(name, hidden=None, group=None):
+    """Project-list bookkeeping (2026-11-28): hide or show a project, set its group
+    ('' = grouped by the model its LoRA trains on). The renders are not touched."""
+    p = load(name)
+    if hidden is not None:
+        p["hidden"] = bool(hidden)
+    if group is not None:
+        p["group"] = " ".join(str(group).split())[:60]
+    save(p)
+    return p
 
 
 def create(name, engine=None, promptset="character-25"):
