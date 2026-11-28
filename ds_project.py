@@ -282,14 +282,49 @@ def list_projects():
                 except Exception:
                     continue
                 cards = p.get("cards") or []
-                out.append({"name": d, "created": p.get("created"),
+                done = sum(1 for c in cards if c.get("status") == "done")
+                failed = sum(1 for c in cards if c.get("status") == "failed")
+                scores = [h for h in p.get("lora_scores") or [] if h.get("mean_lora") is not None]
+                best = max(scores, key=lambda h: h["mean_lora"]) if scores else None
+                if not p.get("reference"):
+                    stage = "new"
+                elif best:
+                    stage = "scored"
+                elif p.get("last_aitk"):
+                    stage = "trained"
+                elif cards and done == len(cards):
+                    stage = "dataset"
+                else:
+                    stage = "rendering"
+                try:
+                    updated = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(pj)))
+                except OSError:
+                    updated = p.get("created") or ""
+                out.append({"name": d, "created": p.get("created"), "updated": updated,
                             "engine": p.get("engine"),
                             "has_reference": bool(p.get("reference")),
-                            "cards": len(cards),
-                            "done": sum(1 for c in cards if c.get("status") == "done"),
+                            "reference": p.get("reference") or "",
+                            "cards": len(cards), "done": done, "failed": failed,
+                            "stage": stage, "hidden": bool(p.get("hidden")),
+                            "group": p.get("group") or "",
+                            "job": (p.get("last_aitk") or {}).get("job") or "",
+                            "lora_score": best["mean_lora"] if best else None,
+                            "base_score": best.get("mean_base") if best else None,
                             "autopilot": bool((p.get("settings") or {}).get("autopilot")),
                             "auto_preset": (p.get("settings") or {}).get("auto_preset") or ""})
     return out
+
+
+def set_meta(name, hidden=None, group=None):
+    """Project-list bookkeeping (2026-11-28): hide or show a project, set its group
+    ('' = grouped by the model its LoRA trains on). The renders are not touched."""
+    p = load(name)
+    if hidden is not None:
+        p["hidden"] = bool(hidden)
+    if group is not None:
+        p["group"] = " ".join(str(group).split())[:60]
+    save(p)
+    return p
 
 
 def create(name, engine=None, promptset="character-25"):
@@ -604,6 +639,7 @@ class Runner:
             self._fail_streak = []
             self._tool = str(caps.get("tool") or "")
             self._fast_said = False
+            self._ollama_off = None
             for n, card in enumerate(todo, start=1):
                 if self.cancel_flag:
                     self._say(f"cancelled after {n - 1} card(s)")
@@ -625,6 +661,9 @@ class Runner:
                     raise RuntimeError(f"stopped: {FAIL_STOP} cards in a row failed with the same "
                                        f"engine error: {self._fail_streak[-1]}")
             self.state["ok"] = not self.cancel_flag
+            if self._ollama_off:
+                self._say("reminder: Ollama was skipped after a timeout, the captions are "
+                          "the prompt lines: stop the engine, then Re-caption")
         except Exception as e:
             self.state["ok"] = False
             self.state["error"] = f"{type(e).__name__}: {e}"
@@ -654,6 +693,29 @@ class Runner:
         # the file names follow the try count: with tries removed, a new name is picked
         # past every file still on disk, so nothing is overwritten
         return keep
+
+    # Ollama timing out during a run (2026-11-28: a 31B vision model next to the engine
+    # took 280 s to load, past the 180 s limit, and was unloaded after each call: every
+    # card waited 3 minutes for nothing). After the first timeout the rest of the run
+    # does without it: captions from the prompt line, no artifact check; said once,
+    # with Re-caption to run once the engine is stopped.
+    def _ollama_settings(self, s):
+        if not getattr(self, "_ollama_off", None):
+            return s
+        s = dict(s, artifact_check=False)
+        if (s.get("caption_source") or "prompt") != "prompt":
+            s["caption_source"] = "prompt"
+        return s
+
+    def _ollama_watch(self, error, what):
+        e = str(error or "")
+        if getattr(self, "_ollama_off", None) or not re.search(r"timed? ?out|TimeoutError", e, re.I):
+            return
+        self._ollama_off = what
+        self._say(f"WARNING: Ollama timed out on {what}: the rest of this run goes without "
+                  f"it (captions from the prompt line, no artifact check). A large vision "
+                  f"model next to the engine loads too slowly: when the run is done, stop "
+                  f"the engine and click Re-caption, or pick a smaller vision model")
 
     def _render_card(self, engine, p, card, ref, d, s, ollama_cfg, fresh=False,
                      base_seed=None):
@@ -729,7 +791,9 @@ class Runner:
                 score, detail = ds_likeness.score(p.get("ref_embedding"), fr.get("faces"))
             else:
                 score, detail = 0, {"reason": f"faces: {fr.get('error')}"}
-            flags, qdetail = ds_quality.check(ref, dst, s, ollama_cfg)
+            flags, qdetail = ds_quality.check(ref, dst, self._ollama_settings(s), ollama_cfg)
+            a = str(qdetail.get("artifact") or "")
+            self._ollama_watch(a if a.startswith("not checked") else "", "the artifact check")
             detail = dict(detail, **qdetail)
             tr = {"file": f"cards/{dst_name}", "seed": r.get("seed_used", seed),
                   "score": score, "detail": detail, "prompt": prompt, "model": model,
@@ -773,7 +837,9 @@ class Runner:
                                     f"threshold ({best['score']} < {s.get('threshold')}): "
                                     f"review it")
         text = resolved_text(os.path.join(d, best["file"]), text, s)
-        cap = ds_captions.caption_for(os.path.join(d, best["file"]), text, s, ollama_cfg)
+        cap = ds_captions.caption_for(os.path.join(d, best["file"]), text,
+                                      self._ollama_settings(s), ollama_cfg)
+        self._ollama_watch(cap.get("warning"), "the captions")
         card["caption"] = cap["caption"]
         card["caption_source_used"] = cap["source_used"]
         if cap.get("warning"):

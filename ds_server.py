@@ -260,7 +260,26 @@ class Studio:
         return {"promptsets": ds_project.list_promptsets()}
 
     def op_projects(self, data):
-        return {"projects": ds_project.list_projects()}
+        """The project list, with what the home screen shows: the group (the user's,
+        else the model the LoRA trains on), the preset's label and what is running."""
+        out = ds_project.list_projects()
+        running = self.runner.state.get("project") if self.runner.state.get("running") else None
+        ap = ds_autopilot.autopilot().status()
+        auto = ap.get("project") if ap.get("running") else None
+        queued = {q[0] if isinstance(q, (list, tuple)) else q for q in ap.get("queue") or []}
+        for x in out:
+            pr = ds_aitoolkit.PRESETS.get(x["auto_preset"] or ds_aitoolkit.DEFAULT_PRESET) or {}
+            x["preset_label"] = pr.get("label", x["auto_preset"])
+            x["group_label"] = x["group"] or x["preset_label"] or "no model"
+            x["busy"] = ("rendering" if x["name"] == running else
+                         "autopilot" if x["name"] == auto else
+                         "queued" if x["name"] in queued else "")
+        return {"projects": out}
+
+    def op_project_meta(self, data):
+        p = self._project(data)
+        p = ds_project.set_meta(p["name"], hidden=data.get("hidden"), group=data.get("group"))
+        return {"hidden": bool(p.get("hidden")), "group": p.get("group") or ""}
 
     def op_project_new(self, data):
         p = ds_project.create(data.get("name"), engine=data.get("engine") or self.engines.default,

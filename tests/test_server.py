@@ -192,3 +192,23 @@ def test_the_page_has_the_delete_button_and_the_loading_spinner(studio):
     _, _, body = get(studio, "/")
     assert b'id="delProj"' in body and b"project_delete" in body
     assert b"@keyframes spin" in body and b"showLoading(" in body
+
+
+def test_home_list_stages_groups_and_hide(studio):
+    """The project list (2026-11-28): stage, group label (the LoRA model by default,
+    the user's group otherwise), hide / show; the page carries the home screen."""
+    assert post(studio, "project_new", {"name": "a"})["ok"]
+    assert post(studio, "project_new", {"name": "b"})["ok"]
+    post(studio, "project_settings", {"name": "b", "settings": {"auto_preset": "moss"}})
+    rows = {x["name"]: x for x in post(studio, "projects")["projects"]}
+    assert rows["a"]["stage"] == "new" and rows["a"]["hidden"] is False
+    assert rows["b"]["group_label"] == "MOSS-Image SFT" and rows["a"]["updated"]
+    r = post(studio, "project_meta", {"name": "a", "hidden": True, "group": "  client  X "})
+    assert r["ok"] and r["hidden"] is True and r["group"] == "client X"
+    rows = {x["name"]: x for x in post(studio, "projects")["projects"]}
+    assert rows["a"]["hidden"] and rows["a"]["group_label"] == "client X"
+    r = post(studio, "project_meta", {"name": "a", "hidden": False, "group": ""})
+    rows = {x["name"]: x for x in post(studio, "projects")["projects"]}
+    assert not rows["a"]["hidden"] and rows["a"]["group_label"] == rows["a"]["preset_label"]
+    _, _, body = get(studio, "/")
+    assert b'id="home"' in body and b"project_meta" in body and b"IntersectionObserver" in body

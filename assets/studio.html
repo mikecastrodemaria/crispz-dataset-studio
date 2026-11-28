@@ -72,24 +72,64 @@ small{color:var(--mut)}
 .loading{display:flex;align-items:center;gap:10px;color:var(--mut);padding:24px 4px}
 .spin{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* home: the project list (2026-11-28) */
+body.home main,body.home .pj{display:none!important}
+body:not(.home) #home{display:none}
+#home{padding:14px 18px;max-width:1600px;margin:0 auto}
+.hbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;position:sticky;top:50px;z-index:4;background:#0b1018ee;padding:8px 0}
+.hbar input[type=search]{flex:1;min-width:220px}
+.hsum{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 10px}
+.hsum .chip{cursor:pointer}.hsum .chip.on{border-color:var(--acc);color:var(--fg)}
+.grp{margin:16px 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);cursor:pointer;display:flex;gap:8px;align-items:center;user-select:none}
+.grp b{color:var(--fg)}.grp .cnt{font-size:11px}.grp::after{content:"";flex:1;border-top:1px solid var(--line)}
+.ptiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.pt{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;transition:border-color .15s,transform .15s}
+.pt:hover{border-color:var(--acc);transform:translateY(-1px)}
+.pt.hid{opacity:.45}
+.pt .th{aspect-ratio:16/10;background:#111827;display:flex;align-items:center;justify-content:center;color:var(--mut);font-size:12px}
+.pt .th img{width:100%;height:100%;object-fit:cover;display:block}
+.pt .bd{padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.pt .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pt .meta{font-size:11px;color:var(--mut);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.pbar{height:4px;background:var(--line);border-radius:2px;overflow:hidden}.pbar i{display:block;height:100%;background:var(--ok)}
+.chip{font-size:10px;padding:1px 7px;border-radius:9px;border:1px solid var(--line);color:var(--mut);white-space:nowrap}
+.chip.st-new{color:var(--mut)}.chip.st-rendering{color:var(--warn);border-color:var(--warn)}.chip.st-dataset{color:var(--acc);border-color:var(--acc)}
+.chip.st-trained{color:#b48cff;border-color:#b48cff}.chip.st-scored{color:var(--ok);border-color:var(--ok)}
+.chip.busy{background:var(--acc);border-color:var(--acc);color:#fff}
+.pt .acts{display:flex;gap:4px;justify-content:flex-end}.pt .acts button{font-size:11px;padding:2px 7px}
+#hmore{height:40px}
 @media (prefers-reduced-motion:reduce){.spin{animation-duration:2.4s}}
-</style></head><body>
+</style></head><body class="home">
 <header>
   <h1>crispz Dataset Studio</h1>
-  <select id="projSel" title="Project"></select>
-  <button id="newProj">New project</button>
-  <button id="cloneProj" title="Copy this project under a new name">Clone</button>
-  <button id="delProj" class="danger" title="Delete this project's folder (exports, ai-toolkit jobs and copied LoRAs are kept)">Delete</button>
+  <button id="homeBtn" class="pj" title="Back to the project list">Projects</button>
+  <select id="projSel" class="pj" title="Project"></select>
+  <button id="newProj" class="pj">New project</button>
+  <button id="cloneProj" class="pj" title="Copy this project under a new name">Clone</button>
+  <button id="delProj" class="danger pj" title="Delete this project's folder (exports, ai-toolkit jobs and copied LoRAs are kept)">Delete</button>
   <button id="queueBtn" title="Autopilot on several projects, one after the other">Queue</button>
   <span id="engineDot"><span class="dot"></span><span id="engineTxt">engine</span></span>
   <button id="engineBtn">Launch engine</button>
-  <button id="runBtn" class="primary">Run</button>
-  <button id="cancelBtn" class="danger" disabled>Cancel</button>
-  <button id="exportBtn">Export ZIP</button>
+  <button id="runBtn" class="primary pj">Run</button>
+  <button id="cancelBtn" class="danger pj" disabled>Cancel</button>
+  <button id="exportBtn" class="pj">Export ZIP</button>
   <span id="status"></span>
   <button id="settingsBtn" title="Engines, Ollama">Settings</button>
   <div id="bar"><i></i></div>
 </header>
+<section id="home">
+  <div class="hbar">
+    <input type="search" id="hq" placeholder="Search: name, model, engine, group, stage">
+    <select id="hstage" title="Stage"><option value="">all stages</option><option value="new">no reference</option><option value="rendering">dataset in progress</option><option value="dataset">dataset complete</option><option value="trained">trained</option><option value="scored">LoRA scored</option></select>
+    <select id="hgroup" title="Group by"><option value="group">group by LoRA model (or your group)</option><option value="engine">group by engine</option><option value="stage">group by stage</option><option value="none">no groups</option></select>
+    <select id="hsort" title="Sort"><option value="updated">recent first</option><option value="name">name</option><option value="score">best LoRA score</option><option value="progress">least advanced</option></select>
+    <label style="color:var(--mut)"><input type="checkbox" id="hhidden"> show hidden</label>
+    <button id="hnew" class="primary">New project</button>
+  </div>
+  <div class="hsum" id="hsum"></div>
+  <div id="hlist"><div class="loading"><span class="spin"></span>Loading projects...</div></div>
+  <div id="hmore"></div>
+</section>
 <main>
 <aside>
   <div class="box"><h2>Reference</h2>
@@ -293,17 +333,17 @@ function showModel(v){const sel=$('modelSel');$('model').value=v||'';
 $('modelSel').onchange=()=>{const sel=$('modelSel');if(sel.value==='custom'){$('modelCustom').style.display='';$('model').focus();}else{$('model').value=sel.value;$('modelCustom').style.display='none';}};
 
 // ---------- projects ----------
-async function loadProjects(sel){const r=await api('projects');const s=$('projSel');s.innerHTML='';
-  (r.projects||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.done}/${p.cards})`;s.appendChild(o);});
-  if(sel&&[...s.options].some(o=>o.value===sel))s.value=sel; if(s.value)await openProject(s.value); else renderEmpty();}
+async function loadProjects(sel,open=true){const r=await api('projects');PROJ=r.projects||[];const s=$('projSel');s.innerHTML='';
+  PROJ.filter(p=>!p.hidden||p.name===sel).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.done}/${p.cards})`;s.appendChild(o);});
+  if(sel&&[...s.options].some(o=>o.value===sel))s.value=sel; if(!open)return; if(s.value)await openProject(s.value); else renderEmpty();}
 function renderEmpty(){P=null;renderDoneBar();$('cards').innerHTML='<p style="color:var(--mut)">No project yet: click New project.</p>';$('ref').style.display='none';}
 async function openProject(name){if(!P||P.name!==name)SIMILAR={};const r=await api('project_get',{name});if(!r.ok)return say(r.error,'err');P=r.project;fill();renderCards();}
 $('newProj').onclick=async()=>{const name=prompt('Project name (letters, digits, - _ .)');if(!name)return;
-  const r=await api('project_new',{name,engine:$('engSel').value||undefined});if(!r.ok)return say(r.error,'err');await loadProjects(r.project.name);};
+  const r=await api('project_new',{name,engine:$('engSel').value||undefined});if(!r.ok)return say(r.error,'err');await openFromHome(r.project.name);};
 $('projSel').onchange=()=>{JUST_LOT=null;openProject($('projSel').value);};
 $('delProj').onclick=async()=>{if(!P)return say('no project to delete','err');const n=P.name;
   if(!confirm(`Delete the project "${n}"?\n\nIts folder goes: reference, cards, every try, settings. Exports, ai-toolkit jobs and LoRAs copied into the engines are kept. This cannot be undone.`))return;
-  const r=await api('project_delete',{name:n});if(!r.ok)return say(r.error,'err');P=null;JUST_LOT=null;await loadProjects();say(`project ${n} deleted`);};
+  const r=await api('project_delete',{name:n});if(!r.ok)return say(r.error,'err');P=null;JUST_LOT=null;await showHome();say(`project ${n} deleted`);};
 $('cloneProj').onclick=()=>{if(!P)return say('no project to clone','err');$('cloneName').value=P.name+'-copy';$('cloneRenders').checked=true;$('cloneMsg').textContent='';$('cloneDlg').showModal();$('cloneName').select();};
 $('cloneGo').onclick=async()=>{const r=await api('project_clone',{name:P.name,new_name:$('cloneName').value.trim(),with_renders:$('cloneRenders').checked});
   if(!r.ok){$('cloneMsg').textContent=r.error;return;}$('cloneDlg').close();JUST_LOT=null;await loadProjects(r.project.name);say(`cloned to ${r.project.name}`);};
@@ -531,7 +571,7 @@ $('autoResume').onclick=async()=>{askNotify();$('autoResume').disabled=true;cons
 $('autoHide').onclick=()=>{AUTO_HIDDEN=(AUTO.project||'')+':'+(AUTO.started||'');renderAuto();};
 $('autoLog').onclick=()=>{const t=$('autoTail');t.style.display=t.style.display==='none'?'':'none';t.scrollTop=1e9;};
 $('queueBtn').onclick=async()=>{const r=await api('projects');const l=$('queueList');
-  l.innerHTML=(r.projects||[]).map(p=>`<div class="row"><label style="min-width:0"><input type="checkbox" value="${esc(p.name)}" ${p.has_reference?'':'disabled'}> ${esc(p.name)}</label><small>${p.done}/${p.cards} card(s)${p.has_reference?'':', no reference photo'}, ${p.autopilot?'to the LoRA'+(p.auto_preset?' ('+esc(p.auto_preset)+')':''):'<b>dataset only</b>'}</small></div>`).join('')||'<small>no project</small>';
+  l.innerHTML=(r.projects||[]).filter(p=>!p.hidden).map(p=>`<div class="row"><label style="min-width:0"><input type="checkbox" value="${esc(p.name)}" ${p.has_reference?'':'disabled'}> ${esc(p.name)}</label><small>${p.done}/${p.cards} card(s)${p.has_reference?'':', no reference photo'}, ${p.autopilot?'to the LoRA'+(p.auto_preset?' ('+esc(p.auto_preset)+')':''):'<b>dataset only</b>'}</small></div>`).join('')||'<small>no project</small>';
   $('queueMsg').textContent=AITK&&AITK.root?'':'set the AI-Toolkit folder in Settings first';$('queueDlg').showModal();};
 $('queueGo').onclick=async()=>{askNotify();const names=[...$('queueList').querySelectorAll('input:checked')].map(x=>x.value);if(!names.length)return $('queueMsg').textContent='tick at least one project';
   const r=await api('autopilot_queue',{names});if(!r.ok){$('queueMsg').textContent=r.error;return;}$('queueDlg').close();AUTO=r.autopilot;AUTO_HIDDEN=null;renderAuto();say(`autopilot queue: ${names.length} project(s)`);poll();};
@@ -670,11 +710,71 @@ $('setSave').onclick=async()=>{const engines={};const errs=[];$('engList').query
 
 // ---------- boot ----------
 function showLoading(t){$('cards').innerHTML=`<div class="loading"><span class="spin"></span>${esc(t)}</div>`;}
-(async()=>{showLoading('Loading projects and engines...');const s0=$('projSel');s0.innerHTML='<option>loading...</option>';s0.disabled=true;
+// ---------- home: the project list ----------
+// The start screen (2026-11-28): every project as a tile, grouped (by default by the
+// model its LoRA trains on, or the group the user gave it), searched, filtered by
+// stage, hidden or shown; tiles are drawn in batches as the page scrolls and the
+// reference thumbnails load lazily. A click opens the project screen as before.
+let PROJ=[],HOME_ITEMS=[],HOME_SHOWN=0,HOME_AT=0;const HOME_BATCH=36;
+const STAGES={new:'no reference',rendering:'dataset in progress',dataset:'dataset complete',trained:'trained',scored:'LoRA scored'};
+const STAGE_ORDER=['new','rendering','dataset','trained','scored'];
+function hprefs(){try{return JSON.parse(localStorage.getItem('ds.home')||'{}');}catch(e){return {};}}
+function hsave(extra){try{const o=Object.assign(hprefs(),{q:$('hq').value,stage:$('hstage').value,group:$('hgroup').value,sort:$('hsort').value,hidden:$('hhidden').checked},extra||{});localStorage.setItem('ds.home',JSON.stringify(o));}catch(e){}}
+function hfill(){const o=hprefs();$('hq').value=o.q||'';$('hstage').value=o.stage||'';$('hgroup').value=o.group||'group';$('hsort').value=o.sort||'updated';$('hhidden').checked=!!o.hidden;}
+function hgroupOf(x,by){return by==='engine'?(x.engine||'no engine'):by==='stage'?STAGES[x.stage]:by==='none'?'':x.group_label;}
+function hlist(){const q=$('hq').value.trim().toLowerCase().split(/\s+/).filter(Boolean),st=$('hstage').value,showH=$('hhidden').checked,sort=$('hsort').value;
+  let l=PROJ.filter(x=>(showH||!x.hidden)&&(!st||x.stage===st)&&q.every(w=>[x.name,x.preset_label,x.engine,x.group_label,STAGES[x.stage],x.job].join(' ').toLowerCase().includes(w)));
+  const pr=x=>x.cards?x.done/x.cards:0;
+  l.sort(sort==='name'?(a,b)=>a.name.localeCompare(b.name):sort==='score'?(a,b)=>(b.lora_score??-1)-(a.lora_score??-1):sort==='progress'?(a,b)=>STAGE_ORDER.indexOf(a.stage)-STAGE_ORDER.indexOf(b.stage)||pr(a)-pr(b):(a,b)=>(b.updated||'').localeCompare(a.updated||''));
+  return l;}
+function renderHome(keep){const by=$('hgroup').value,l=hlist(),col=new Set(hprefs().collapsed||[]);
+  const byStage={};PROJ.filter(x=>$('hhidden').checked||!x.hidden).forEach(x=>byStage[x.stage]=(byStage[x.stage]||0)+1);
+  $('hsum').innerHTML=`<span class="chip">${l.length} / ${PROJ.length} project(s)</span>`+STAGE_ORDER.filter(k=>byStage[k]).map(k=>`<span class="chip st-${k}${$('hstage').value===k?' on':''}" data-st="${k}">${STAGES[k]}: ${byStage[k]}</span>`).join('')+(PROJ.some(x=>x.hidden)&&!$('hhidden').checked?`<span class="chip">${PROJ.filter(x=>x.hidden).length} hidden</span>`:'');
+  HOME_ITEMS=[];const groups=new Map();
+  l.forEach(x=>{const g=hgroupOf(x,by);if(!groups.has(g))groups.set(g,[]);groups.get(g).push(x);});
+  [...groups.keys()].sort((a,b)=>by==='stage'?0:a.localeCompare(b)).forEach(g=>{const xs=groups.get(g);
+    if(by!=='none')HOME_ITEMS.push({g,n:xs.length,closed:col.has(g)});if(!col.has(g)||by==='none')xs.forEach(x=>HOME_ITEMS.push({x}));});
+  const n=keep?Math.max(HOME_SHOWN,HOME_BATCH):HOME_BATCH;$('hlist').innerHTML='';HOME_SHOWN=0;
+  if(!l.length){$('hlist').innerHTML=`<p style="color:var(--mut)">${PROJ.length?'No project matches.':'No project yet: click New project.'}</p>`;return;}
+  homeMore(n);}
+function tileHtml(x){const pct=x.cards?Math.round(100*x.done/x.cards):0;
+  const img=x.reference?`<img loading="lazy" alt="" src="/file/${encodeURIComponent(x.name)}/${encodeURIComponent(x.reference)}">`:'no reference';
+  return `<div class="pt${x.hidden?' hid':''}" data-n="${esc(x.name)}"><div class="th">${img}</div><div class="bd">
+  <div class="nm" title="${esc(x.name)}">${esc(x.name)}</div><div class="pbar"><i style="width:${pct}%"></i></div>
+  <div class="meta"><span>${x.done}/${x.cards} card(s)</span>${x.failed?`<span style="color:var(--bad)">${x.failed} failed</span>`:''}<span style="flex:1"></span><span title="last change">${esc(x.updated||'')}</span></div>
+  <div class="meta"><span class="chip st-${x.stage}">${STAGES[x.stage]}</span>${x.busy?`<span class="chip busy">${esc(x.busy)}</span>`:''}${x.engine?`<span class="chip" title="dataset engine">${esc(x.engine)}</span>`:''}<span class="chip" title="the model the LoRA trains on">${esc(x.preset_label||'')}</span>${x.lora_score!=null?`<span class="chip st-scored" title="likeness with the LoRA / without">LoRA ${x.lora_score}${x.base_score!=null?' / '+x.base_score:''}</span>`:''}${x.group?`<span class="chip" title="your group">${esc(x.group)}</span>`:''}</div>
+  <div class="acts"><button data-a="group" title="Put it in a group of yours (empty = grouped by its LoRA model)">Group</button><button data-a="hide">${x.hidden?'Show':'Hide'}</button></div></div></div>`;}
+function homeMore(n){const box=$('hlist');let grid=box.lastElementChild&&box.lastElementChild.classList.contains('ptiles')?box.lastElementChild:null;const end=Math.min(HOME_ITEMS.length,HOME_SHOWN+(n||HOME_BATCH));
+  for(let i=HOME_SHOWN;i<end;i++){const it=HOME_ITEMS[i];
+    if(it.g!==undefined){const h=document.createElement('div');h.className='grp';h.dataset.g=it.g;h.innerHTML=`${it.closed?'&#9656;':'&#9662;'} <b>${esc(it.g)}</b> <span class="cnt">${it.n}</span>`;box.appendChild(h);grid=null;continue;}
+    if(!grid){grid=document.createElement('div');grid.className='ptiles';box.appendChild(grid);}
+    grid.insertAdjacentHTML('beforeend',tileHtml(it.x));}
+  HOME_SHOWN=end;}
+new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting)&&document.body.classList.contains('home')&&HOME_SHOWN<HOME_ITEMS.length)homeMore();},{rootMargin:'600px'}).observe($('hmore'));
+async function showHome(){document.body.classList.add('home');try{history.replaceState(null,'',location.pathname);}catch(e){}
+  await loadProjects(undefined,false);renderHome(true);HOME_AT=Date.now();}
+async function openFromHome(name){document.body.classList.remove('home');try{history.replaceState(null,'','?project='+encodeURIComponent(name));}catch(e){}
+  showLoading('Opening '+name+'...');JUST_LOT=null;await loadProjects(name);}
+$('homeBtn').onclick=showHome;$('hnew').onclick=()=>$('newProj').click();
+['hq','hstage','hgroup','hsort','hhidden'].forEach(id=>$(id).addEventListener(id==='hq'?'input':'change',()=>{hsave();renderHome();}));
+$('hsum').onclick=e=>{const c=e.target.closest('[data-st]');if(!c)return;$('hstage').value=$('hstage').value===c.dataset.st?'':c.dataset.st;hsave();renderHome();};
+$('hlist').onclick=async e=>{const g=e.target.closest('.grp');if(g){const col=new Set(hprefs().collapsed||[]);col.has(g.dataset.g)?col.delete(g.dataset.g):col.add(g.dataset.g);hsave({collapsed:[...col]});return renderHome(true);}
+  const t=e.target.closest('.pt');if(!t)return;const name=t.dataset.n,x=PROJ.find(p=>p.name===name);const b=e.target.closest('button[data-a]');
+  if(b&&b.dataset.a==='hide'){const r=await api('project_meta',{name,hidden:!x.hidden});if(!r.ok)return say(r.error,'err');x.hidden=r.hidden;return renderHome(true);}
+  if(b&&b.dataset.a==='group'){const v=prompt(`Group of "${name}" (empty = by its LoRA model: ${x.preset_label})`,x.group||'');if(v===null)return;
+    const r=await api('project_meta',{name,group:v});if(!r.ok)return say(r.error,'err');x.group=r.group;x.group_label=r.group||x.preset_label;return renderHome(true);}
+  openFromHome(name);};
+
+// ---------- boot ----------
+// ?project=<name>: open that project (tools/send_to_studio.py, the IrfanView key);
+// otherwise the project list comes first, the engines are asked in the background.
+(async()=>{hfill();let want=null;try{want=new URLSearchParams(location.search).get('project');}catch(e){}
+  if(want){document.body.classList.remove('home');showLoading('Opening '+want+'...');}
   const ps=await api('promptsets');(ps.promptsets||[]).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=`${p.name} (${p.count})`;$('psSel').appendChild(o);});
-  // ?project=<name>: open that project (tools/send_to_studio.py, the IrfanView key)
-  let want=null;try{want=new URLSearchParams(location.search).get('project');}catch(e){}
-  try{await refreshEngines();await refreshAitk();}catch(e){}
-  s0.disabled=false;await loadProjects(want||undefined);poll();setInterval(refreshEngines,15000);})();
+  const eng=(async()=>{try{await refreshEngines();await refreshAitk();}catch(e){}})();
+  if(want){await eng;await loadProjects(want);}else{await loadProjects(undefined,false);renderHome();HOME_AT=Date.now();}
+  poll();setInterval(refreshEngines,15000);
+  // the list follows the runs (stage, progress, busy) while it is shown
+  setInterval(async()=>{if(document.body.classList.contains('home')&&!document.querySelector('dialog[open]')&&document.activeElement!==$('hq')){await loadProjects(undefined,false);renderHome(true);}},6000);})();
 </script>
 </body></html>
