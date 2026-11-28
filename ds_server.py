@@ -89,7 +89,7 @@ ASSETS = os.path.join(HERE, "assets")
 CONFIG_PATH = os.path.join(HERE, "config.json")
 SAMPLE_PATH = os.path.join(HERE, "config-sample.json")
 DEFAULT_PORT = 8780
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 
 _LOG_LOCK = threading.Lock()
 
