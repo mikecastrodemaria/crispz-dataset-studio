@@ -81,6 +81,7 @@ import ds_aitoolkit
 import ds_lorascore
 import ds_similar
 import ds_autopilot
+import ds_term
 import ds_captions
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -95,7 +96,7 @@ _LOG_LOCK = threading.Lock()
 
 def log(msg):
     with _LOG_LOCK:
-        print(f"{time.strftime('%H:%M:%S')} {msg}", flush=True)
+        print(ds_term.line(msg), flush=True)
 
 
 ds_engines.set_log_hook(log)
@@ -868,13 +869,37 @@ def already_running(port, timeout=1.5):
         return False
 
 
+def _banner(port):
+    """The start banner: URL, each engine and whether it answers, ai-toolkit, projects."""
+    engs = []
+    for name, e in STUDIO.engines.by_name.items():
+        try:
+            up = bool(e.caps(max_age=0, timeout=1))
+        except Exception:
+            up = None
+        try:
+            prt = ds_engines._port_of(e.url)
+        except Exception:
+            prt = "?"
+        engs.append((name, prt, up))
+    try:
+        aitk = ds_aitoolkit.find_root(STUDIO.config.get("ai_toolkit_dir"))
+    except Exception:
+        aitk = None
+    try:
+        n = len(ds_project.list_projects())
+    except Exception:
+        n = 0
+    return ds_term.banner(APP_VERSION, f"http://127.0.0.1:{port}", engs, aitk, n,
+                          python=sys.executable)
+
+
 def serve(port=DEFAULT_PORT, config=None, open_browser=True):
     global STUDIO
     STUDIO = Studio(config)
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     srv.daemon_threads = True
-    log(f"crispz-dataset-studio {APP_VERSION}: http://127.0.0.1:{port}  "
-        f"(engines: {', '.join(STUDIO.engines.by_name) or 'none configured'})")
+    print(_banner(port), flush=True)
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
     try:

@@ -1,6 +1,10 @@
 @echo off
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
+REM UTF-8 console (the banner's boxes), Python in UTF-8, a window title
+chcp 65001 >nul 2>&1
+set PYTHONUTF8=1
+title crispz Dataset Studio
 REM crispz-dataset-studio: stdlib server + Pillow. Any Python 3.10+ with Pillow works;
 REM the crispz family venvs all have it, so we reuse one when present (no install).
 set RUNPY=
@@ -14,6 +18,5 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-echo Python = !RUNPY!
 !RUNPY! ds_server.py %*
 endlocal
