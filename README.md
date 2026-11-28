@@ -2,8 +2,9 @@
 
 > One reference photo in, a captioned, likeness-checked character LoRA dataset out.
 > A standalone local app that drives the crispz family engines (crispz-klein,
-> crispz-qwen-edit, crispz-flux3) through their CLI protocol v1, and starts them itself.
-> Version 0.1.0 (2026-10-29), local work in progress.
+> crispz-qwen-edit, crispz-flux3, crispz-moss, crispz-minimax...) through their CLI
+> protocol v1, starts them itself, and trains and scores the LoRA with ai-toolkit.
+> Version 0.2.0 (2026-11-28). Changes: [CHANGELOG.md](CHANGELOG.md).
 
 ![crispz Dataset Studio: a 25-card run on crispz-klein, the likeness badge on each card](assets/dataset-studio.png)
 
